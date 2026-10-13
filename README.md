@@ -50,13 +50,13 @@ The TV app includes Orbit's download service and can start it through a compatib
 
 Open Orbit from your Games row and use the controller to browse, explore and choose a download. The native app shares your catalogue, favourites and download queue with the browser version.
 
-*Discover, game details and download-options screenshots show the current 1.2.0 catalogue. Browse retains the native app screenshot from 1.1.0. These previews are rendered locally; other screenshots show existing workflows with illustrative storage and download values.*
+*Discover previews the 1.3.0 catalogue in the Store interface. Game details and download options show 1.2.0, and Browse shows the native app from 1.1.0. These previews are rendered locally; other screenshots show existing workflows with illustrative storage and download values.*
 
 ### Discover, browse and choose a download
 
 **Start with something new.** Discover opens first. **New on Orbit** brings featured picks and recent additions to the first row, followed by **Latest releases**. Move down to All games to explore a grid of 96 games per page. PS4 and PS5 editions have their own platform labels and download choices.
 
-![Orbit Store 1.2.0 native Discover with Red Dead Redemption 2 selected](assets/1.2.0/native-discover.png)
+![Orbit Store 1.3.0 Discover with Uncharted 4 selected](assets/1.3.0/store-discover-uncharted.png)
 
 **Keep exploring.** All games gives each title its own tile. Move through the grid with your controller and use the page controls to see more.
 
