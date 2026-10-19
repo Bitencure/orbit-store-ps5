@@ -25,6 +25,13 @@
 /* Unofficial fork identity. ORBIT_VERSION must stay the upstream protocol version:
  * the native app and updater compare it. The tag is shown separately. */
 #define ORBIT_FORK_TAG "custom.1"
+/* Where this build looks for its own releases. The game catalogue deliberately keeps
+ * following upstream; only binaries come from here, so the fork is never replaced by an
+ * official build. The feed files live on this branch so upstream's payloads.json never conflicts. */
+#ifndef ORBIT_UPDATE_REPO
+#define ORBIT_UPDATE_REPO "Bitencure/orbit-store-ps5"
+#endif
+#define ORBIT_UPDATE_BRANCH "dev"
 #define ORBIT_SOURCE_NOTICE_VERSION 1
 #define ORBIT_SOURCE_ARCHIVE 1U
 #define ORBIT_SOURCE_VIKINGFILE 2U

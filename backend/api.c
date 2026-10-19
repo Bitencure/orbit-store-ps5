@@ -280,6 +280,9 @@ static enum MHD_Result route(struct MHD_Connection *c, const char *url, const ch
         cJSON *o = cJSON_CreateObject();
         cJSON_AddStringToObject(o, "name", "Orbit Store");
         cJSON_AddStringToObject(o, "version", ORBIT_VERSION);
+        /* Fork: lets clients feature-detect pasted links without parsing version strings. */
+        cJSON_AddStringToObject(o, "forkTag", ORBIT_FORK_TAG);
+        cJSON_AddBoolToObject(o, "customLinks", true);
         cJSON_AddStringToObject(o, "instanceId", orbit.instance_id);
         cJSON_AddBoolToObject(o, "stopping", orbit_is_stopping());
         cJSON_AddNumberToObject(o, "receiveProtocol", 1);

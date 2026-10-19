@@ -202,7 +202,7 @@ static int create_locked(const Release *r, const char *sid, const Storage *pin,
             : "This provider does not support direct console downloads yet.");
         return 409;
     }
-#ifndef ORBIT_TEST
+#if !defined(ORBIT_TEST) && !defined(ORBIT_LIVE_VERIFY)
     if (orbit.desktop) {
         copy_text(err, cap, "Desktop preview cannot download games. Connect to Orbit on your PS5.");
         return 409;

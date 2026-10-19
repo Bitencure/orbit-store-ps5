@@ -147,6 +147,12 @@ test-hosts: build/orbit-hosts-test
 	./build/orbit-hosts-test
 test-custom: build/orbit-test
 	python3 tests/custom_integration.py
+# Local verification binary: production allowlists and socket guard, with the desktop download
+# restriction lifted so the real transfer code can be checked against real hosts. Never shipped.
+.PHONY: live-verify
+live-verify: build/orbit-live
+build/orbit-live: $(SOURCES) $(HEADERS) $(GENERATED) $(HOST_ARCHIVE_DEPS)
+	$(HOST_CC) $(CPPFLAGS) $(CFLAGS) -DORBIT_DESKTOP -DORBIT_LIVE_VERIFY $(SOURCES) -o $@ -lcurl -lmicrohttpd -lssl -lcrypto $(HOST_ARCHIVE_LIBS) -lpthread -lm
 build/orbit-launcher-test: launcher/install.c launcher/install.h tests/launcher_driver.c build/generated/launcher.h
 	$(HOST_CC) $(CPPFLAGS) $(CFLAGS) launcher/install.c tests/launcher_driver.c -o $@
 build/orbit-launcher-platform-test: launcher/platform_ps5.c launcher/install.h tests/launcher_platform_driver.c tests/stubs/ps5/kernel.h

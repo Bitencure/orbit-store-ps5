@@ -4,7 +4,7 @@ import { bytes } from "./types";
 import { t } from "./i18n";
 import { rich } from "./Rich";
 const releasesUrl =
-  "https://github.com/saawant12/orbit-store-ps5/releases/latest";
+  "https://github.com/Bitencure/orbit-store-ps5/releases/latest";
 interface Status {
   available: boolean;
   installed: "none" | "orbit" | "manual" | "folder" | "blocked";

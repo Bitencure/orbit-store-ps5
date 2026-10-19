@@ -9,8 +9,8 @@
 #include <strings.h>
 #include <time.h>
 
-#define FEED "https://raw.githubusercontent.com/saawant12/orbit-store-ps5/main/payloads.json"
-#define RELEASE_BASE "https://github.com/saawant12/orbit-store-ps5/releases/download/"
+#define FEED "https://raw.githubusercontent.com/" ORBIT_UPDATE_REPO "/" ORBIT_UPDATE_BRANCH "/fork-payloads.json"
+#define RELEASE_BASE "https://github.com/" ORBIT_UPDATE_REPO "/releases/download/"
 #define AUTO_CHECK_INTERVAL (6 * 60 * 60)
 #define MAX_ELF (64 * 1024 * 1024)
 static struct {
