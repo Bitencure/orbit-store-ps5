@@ -52,7 +52,16 @@ export interface Game {
   newOnOrbitRank?: number | null;
   releases: Release[];
 }
-export type SourceId = "vikingfile" | "archive" | "akirabox" | "datanodes" | "1fichier";
+export type SourceId =
+  | "vikingfile"
+  | "archive"
+  | "akirabox"
+  | "datanodes"
+  | "1fichier"
+  // Fork: hosts for links the user pastes.
+  | "web"
+  | "gofile"
+  | "fuckingfast";
 export interface SourceSettings {
   enabled: SourceId[];
   acknowledged: boolean;
@@ -105,6 +114,10 @@ export interface Job {
   error: string;
   verification: string;
   canRefreshLink?: boolean;
+  // Fork: a pasted direct link can be given a new address when it expires.
+  canRefreshUrl?: boolean;
+  sourceId?: string;
+  origin?: "local";
   compression?: string;
   canEnterArchivePassword?: boolean;
   extracted?: number;
@@ -199,6 +212,9 @@ export interface LibraryTarget {
   request: number;
 }
 export interface System {
+  // Fork builds report these; official builds do not.
+  forkTag?: string;
+  customLinks?: boolean;
   catalogueRevision: number;
   name: string;
   version: string;
@@ -272,4 +288,46 @@ export interface BrowserSession {
     | "cancelled";
   message: string;
   jobId: string;
+}
+
+// Fork: pasted links. The service checks a link, then the normal queue takes over.
+export type LinkState =
+  | "resolving"
+  | "ready"
+  | "needs-browser"
+  | "needs-details"
+  | "source-disabled"
+  | "unsupported"
+  | "refreshed"
+  | "cancelled"
+  | "error"
+  | "idle";
+export interface LinkReply {
+  state: LinkState;
+  message: string;
+  busy?: boolean;
+  provider?: string;
+  providerLabel?: string;
+  releaseId?: string;
+  torboxReleaseId?: string;
+  filename?: string;
+  sizeBytes?: number;
+  sizePending?: boolean;
+  resumable?: boolean;
+  archive?: boolean;
+  viaBrowser?: boolean;
+  torboxSetup?: boolean;
+  delivery?: { direct: boolean; torbox: boolean; torboxReason: string };
+}
+export interface SavedLink {
+  id: string;
+  title: string;
+  titleId: string;
+  platform: string;
+  format: string;
+  filename: string;
+  url: string;
+  provider: string;
+  providerLabel: string;
+  sizeBytes?: number;
 }

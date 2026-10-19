@@ -614,3 +614,5 @@ bool debrid_release_supported(const Release *release, char *why, size_t cap) {
     copy_text(why, cap, "TorBox does not list this host.");
     return false;
 }
+
+bool debrid_connected_locked(void) { return debrid.connected && debrid.key[0]; }

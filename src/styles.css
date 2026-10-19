@@ -3157,3 +3157,24 @@ html.pointer .debrid-settings input:focus {
 .archive-password-form label { display: grid; gap: .6rem; }
 .archive-password-form input { width: 100%; min-width: 0; }
 .archive-password-form .actions { display: flex; flex-wrap: wrap; gap: .75rem; }
+
+/* Add a download link (fork). Fields, buttons and notices reuse the app's own styles. */
+.add-link { display: grid; gap: 1.2rem; width: min(46rem, 100%); }
+.add-link h1, .add-link h2 { margin: 0; }
+.add-link textarea { font: inherit; color: inherit; width: 100%; box-sizing: border-box; resize: vertical; }
+.add-link-form { display: grid; gap: 1rem; }
+.add-link-form label, .add-link-rename, .add-link-import label { display: grid; gap: .5rem; }
+.add-link-form input, .add-link-rename input { width: 100%; box-sizing: border-box; }
+.add-link .actions { display: flex; flex-wrap: wrap; gap: .75rem; }
+.add-link-card { display: grid; gap: 1rem; padding: 1.2rem 1.4rem; border-radius: 18px; background: var(--field); box-shadow: var(--field-edge); }
+.add-link-card h2 { overflow-wrap: anywhere; }
+.add-link-facts { display: flex; flex-wrap: wrap; gap: .4rem 1.4rem; margin: 0; padding: 0; list-style: none; color: var(--text-2); font-size: .9rem; }
+.add-link-delivery { display: flex; flex-wrap: wrap; gap: .75rem; }
+.add-link-saved summary { cursor: pointer; padding: .4rem 0; }
+.add-link-saved ul { list-style: none; margin: 1rem 0; padding: 0; display: grid; gap: .6rem; }
+.add-link-saved li { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; }
+.add-link-saved li > span { flex: 1 1 14rem; display: grid; min-width: 0; overflow-wrap: anywhere; }
+.add-link-saved small { color: var(--text-3); }
+.add-link-import { display: grid; gap: .8rem; }
+.add-link-problems { color: var(--text-2); font-size: .85rem; padding-left: 1.2rem; }
+.add-link-modal { width: min(50rem, 94vw); }

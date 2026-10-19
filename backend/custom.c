@@ -139,6 +139,7 @@ static cJSON *run_resolve(const Request *q) {
             snprintf(message, sizeof message, "%s %s", host->note, why);
             o = state_json("unsupported", message);
             provider_fields(o, host);
+            cJSON_AddBoolToObject(o, "torboxSetup", !debrid_connected_locked());
         }
         pthread_mutex_unlock(&orbit.mutex);
         return o;
@@ -160,6 +161,7 @@ static cJSON *run_resolve(const Request *q) {
                 ? "Download through TorBox now, or enter the exact file name and size shown on the provider page to use the PS5 browser."
                 : "Enter the exact file name and size in bytes shown on the provider page.");
             provider_fields(o, host);
+            if (!tb) cJSON_AddBoolToObject(o, "torboxSetup", !debrid_connected_locked());
             cJSON *delivery = cJSON_AddObjectToObject(o, "delivery");
             cJSON_AddBoolToObject(delivery, "direct", false);
             cJSON_AddBoolToObject(delivery, "torbox", tb);

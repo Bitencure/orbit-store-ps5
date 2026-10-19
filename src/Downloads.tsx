@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Icon, Modal } from "./components";
+import { RefreshLink } from "./AddLink";
 import { Artwork } from "./Artwork";
 import {
   bytes,
@@ -46,6 +47,7 @@ export function Downloads({
   const [forget, setForget] = useState(false);
   const [message, setMessage] = useState("");
   const [passwordJob, setPasswordJob] = useState<Job | null>(null);
+  const [linkJob, setLinkJob] = useState<Job | null>(null);
   const [archivePassword, setArchivePassword] = useState("");
   async function retryExtraction() {
     if (!passwordJob || !archivePassword) return;
@@ -102,6 +104,11 @@ export function Downloads({
     });
   }
   async function run(job: Job, name: string, remove = false) {
+    // A pasted link has no provider page to reopen: ask for its new address instead.
+    if (name === "refresh-link" && job.canRefreshUrl) {
+      setLinkJob(job);
+      return;
+    }
     setBusy(job.id);
     setError("");
     setMessage("");
@@ -140,6 +147,11 @@ export function Downloads({
   // The dialogs every layout shares: archive password, cancel or delete, clear history.
   const dialogs = (
     <>
+      {linkJob && (
+        <Modal title={t("Give this download a new link")} close={() => setLinkJob(null)}>
+          <RefreshLink job={linkJob} close={() => setLinkJob(null)} done={() => setLinkJob(null)} />
+        </Modal>
+      )}
       {passwordJob && <Modal title={t("Enter archive password")} close={() => { if (!busy) { setPasswordJob(null); setArchivePassword(""); } }}>
         <form className="archive-password-form" onSubmit={e => { e.preventDefault(); void retryExtraction(); }}>
           <h2>{t("Enter archive password")}</h2>

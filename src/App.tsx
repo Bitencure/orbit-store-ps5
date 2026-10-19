@@ -19,6 +19,7 @@ import { DownloadLimit } from "./DownloadLimit";
 import { ArchiveSetting } from "./ArchiveSetting";
 import { Sources } from "./Sources";
 import { Pairing } from "./Pairing";
+import { AddLink } from "./AddLink";
 import type { Game, LibraryTarget } from "./types";
 import { browseGames, newlyAddedGames, defaultFilters, CATALOG_STEP, type BrowseFilters } from "./browse";
 import { useInfiniteList } from "./infiniteList";
@@ -61,6 +62,11 @@ export default function App() {
       current = false;
     };
   }, [handoffHash, orbit.refresh]);
+  // Fork: the native app (or a bookmark) opens "#add-url" to start pasting a link.
+  const [addLinkHash, setAddLinkHash] = useState(false);
+  useEffect(() => {
+    if (handoffHash === "#add-url") setAddLinkHash(true);
+  }, [handoffHash]);
   const [tab, setTab] = useState<
       "Discover" | "Browse" | "Library" | "Downloads"
     >("Discover"),
@@ -119,7 +125,8 @@ export default function App() {
   const [storageOpen, setStorageOpen] = useState(false),
     [sourcesOpen, setSourcesOpen] = useState(false),
     [autoOpen, setAutoOpen] = useState(false),
-    [pairOpen, setPairOpen] = useState(false);
+    [pairOpen, setPairOpen] = useState(false),
+    [addLinkOpen, setAddLinkOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<"debrid" | undefined>();
   // Crossbar, Cinema and Panorama show settings as a page of sections.
   const [settingsPage, setSettingsPage] = useState<SettingsSection | null>(null);
@@ -132,6 +139,18 @@ export default function App() {
     settingsReturn.current = null;
     if (restoreSelection) onReturn?.();
   }, []);
+  useEffect(() => {
+    if (!addLinkHash || !orbit.ready) return;
+    if (!orbit.system?.paired) {
+      setPairOpen(true);
+      return;
+    }
+    setAddLinkHash(false);
+    window.history.replaceState(null, "", window.location.pathname + window.location.search);
+    setHandoffHash("");
+    if (iface === "store") setAddLinkOpen(true);
+    else setSettingsPage("addlink");
+  }, [addLinkHash, orbit.ready, orbit.system?.paired, iface]);
   const [libraryTarget, setLibraryTarget] = useState<LibraryTarget | null>(
     null,
   );
@@ -187,6 +206,7 @@ export default function App() {
   }
   const back = useCallback(() => {
     if (pairOpen) setPairOpen(false);
+    else if (addLinkOpen) setAddLinkOpen(false);
     else if (sourcesOpen) setSourcesOpen(false);
     else if (storageOpen) setStorageOpen(false);
     else if (autoOpen || settingsPage) closeSettings();
@@ -198,7 +218,7 @@ export default function App() {
         first?.focus({ preventScroll: true });
       });
     }
-  }, [game, tab, storageOpen, autoOpen, settingsPage, pairOpen, sourcesOpen, closeSettings]);
+  }, [game, tab, storageOpen, autoOpen, settingsPage, pairOpen, sourcesOpen, addLinkOpen, closeSettings]);
   const consoleBrowser =
     orbit.system?.platform === "ps5" && !!orbit.system.localSessionAvailable;
   useController(back, consoleBrowser);
@@ -314,7 +334,7 @@ export default function App() {
     <>
       <NativeAppNotice
         version={orbit.system?.version}
-        hidden={autoOpen || pairOpen || sourcesOpen || storageOpen}
+        hidden={autoOpen || pairOpen || sourcesOpen || storageOpen || addLinkOpen}
       />
       <UpdateNotice
         enabled={!!orbit.system?.paired && orbit.system.platform !== "desktop"}
@@ -739,6 +759,13 @@ export default function App() {
           />
         ) : null
       }
+      addLink={
+        <AddLink
+          onQueued={(id) => openDownload(id)}
+          openSources={() => setSettingsPage("sources")}
+          openTorbox={() => setSettingsPage("torbox")}
+        />
+      }
       storage={storagePanel}
       pairing={<Pairing inline system={orbit.system} pair={orbit.pair} close={() => closeSettings()} />}
     />
@@ -848,6 +875,14 @@ export default function App() {
                 onClick={showSearch}
               >
                 <Icon name="search" />
+              </button>
+              <button
+                className="top-icon"
+                data-label={t("Add link")}
+                aria-label={t("Add a download link")}
+                onClick={paired(() => setAddLinkOpen(true))}
+              >
+                <Icon name="link" />
               </button>
               <button
                 className="top-icon"
@@ -1060,6 +1095,25 @@ export default function App() {
         </div>
       </footer>
         </>
+      )}
+      {addLinkOpen && (
+        <Modal title={t("Add a download link")} close={() => setAddLinkOpen(false)} className="add-link-modal">
+          <AddLink
+            onQueued={(id) => {
+              setAddLinkOpen(false);
+              openDownload(id);
+            }}
+            openSources={() => {
+              setAddLinkOpen(false);
+              setSourcesOpen(true);
+            }}
+            openTorbox={() => {
+              setAddLinkOpen(false);
+              setSettingsSection("debrid");
+              setAutoOpen(true);
+            }}
+          />
+        </Modal>
       )}
       {storageOpen && (
         <Modal

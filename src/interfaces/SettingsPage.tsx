@@ -17,6 +17,7 @@ import { PayloadManagers, StartAutomatically, useAutoStart } from "../AutoStart"
 import { Glyph, type GlyphName } from "./Glyph";
 
 export type SettingsSection =
+  | "addlink"
   | "appearance"
   | "language"
   | "sources"
@@ -42,6 +43,7 @@ export const settingsGroups: { label: string; sections: { id: SettingsSection; l
   {
     label: /* i18n */ "Orbit on your PS5",
     sections: [
+      { id: "addlink", label: /* i18n */ "Add a download link", glyph: "link" },
       { id: "sources", label: /* i18n */ "Download sources", glyph: "cloud" },
       { id: "storage", label: /* i18n */ "Storage and downloads", glyph: "drive" },
       { id: "pair", label: /* i18n */ "Pair devices", glyph: "link" },
@@ -68,6 +70,7 @@ export function SettingsPage({
   choose,
   system,
   sources,
+  addLink,
   storage,
   pairing,
   updateAvailable,
@@ -77,6 +80,7 @@ export function SettingsPage({
   choose: (section: SettingsSection) => void;
   system: System | null;
   sources: ReactNode;
+  addLink: ReactNode;
   storage: ReactNode;
   pairing: ReactNode;
   updateAvailable: boolean;
@@ -125,6 +129,7 @@ export function SettingsPage({
   const content: Record<SettingsSection, ReactNode> = {
     appearance: <Appearance page />,
     language: <LanguageSetting />,
+    addlink: addLink,
     sources,
     storage,
     pair: pairing,

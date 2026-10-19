@@ -21,6 +21,7 @@ export function Icon({
     | "scan"
     | "more"
     | "chevron"
+    | "link"
     | "info";
 }) {
   return (
@@ -43,6 +44,8 @@ export function Icon({
         </>
       ) : name === "chevron" ? (
         <path d="m9 5 7 7-7 7" />
+      ) : name === "link" ? (
+        <path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" />
       ) : name === "info" ? (
         <>
           <rect x="5" y="3" width="14" height="18" rx="2" />
