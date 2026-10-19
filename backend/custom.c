@@ -52,45 +52,52 @@ Release *custom_release_find(const char *id) {
     return NULL;
 }
 
-static bool has_suffix(const char *name, const char *suffix) {
-    size_t n = strlen(name), k = strlen(suffix);
-    return n > k && !strcasecmp(name + n - k, suffix);
-}
-static void classify(Release *r) {
-    /* Archives are inspected after download, exactly like unverified catalogue archives. */
-    const char *archive = has_suffix(r->filename, ".zip") ? "zip" : has_suffix(r->filename, ".7z") ? "7z" :
-                          has_suffix(r->filename, ".rar") ? "rar" : "";
-    if (*archive) {
-        copy_text(r->compression, sizeof r->compression, archive);
-        copy_text(r->format, sizeof r->format, "Unknown");
-        r->archive_unverified = true;
-    } else {
-        copy_text(r->format, sizeof r->format,
-                  has_suffix(r->filename, ".pkg") ? "PKG" : has_suffix(r->filename, ".exfat") ? "exFAT" :
-                  has_suffix(r->filename, ".ffpfsc") ? "FFPFSC" : "File");
-    }
-}
 static cJSON *state_json(const char *state, const char *message) {
     cJSON *o = cJSON_CreateObject();
     cJSON_AddStringToObject(o, "state", state);
     cJSON_AddStringToObject(o, "message", message);
     return o;
 }
-static void describe(cJSON *o, const Release *r, bool ranges) {
+static void describe(cJSON *o, const Release *r, bool ranges, bool direct) {
     const HostAdapter *h = host_by_id(r->source);
     cJSON_AddStringToObject(o, "provider", r->source);
     cJSON_AddStringToObject(o, "providerLabel", h ? h->label : r->source);
     cJSON_AddStringToObject(o, "releaseId", r->id);
     cJSON_AddStringToObject(o, "filename", r->filename);
     cJSON_AddNumberToObject(o, "sizeBytes", (double)r->size);
+    cJSON_AddBoolToObject(o, "sizePending", r->size_pending);
     cJSON_AddBoolToObject(o, "resumable", ranges);
     cJSON_AddBoolToObject(o, "archive", r->compression[0] != 0);
-    char why[160] = {0};
+    cJSON_AddBoolToObject(o, "viaBrowser", h && h->kind == HOST_BROWSER);
+    char why[200] = {0};
     cJSON *delivery = cJSON_AddObjectToObject(o, "delivery");
     bool torbox = debrid_release_supported(r, why, sizeof why);
-    cJSON_AddBoolToObject(delivery, "direct", true);
+    cJSON_AddBoolToObject(delivery, "direct", direct);
     cJSON_AddBoolToObject(delivery, "torbox", torbox);
     cJSON_AddStringToObject(delivery, "torboxReason", torbox ? "" : why);
+}
+/* A link whose name and size only TorBox can tell us; it can be delivered no other way. */
+static void torbox_release(Release *r, const HostAdapter *host, const char *url) {
+    char segment[512] = {0}, name[sizeof r->filename];
+    memset(r, 0, sizeof *r);
+    r->local = r->size_pending = true;
+    random_hex(r->id + snprintf(r->id, sizeof r->id, "custom-"), 6);
+    if (!url_last_segment(url, segment, sizeof segment) || !filename_sanitize(segment, name, sizeof name))
+        snprintf(name, sizeof name, "%s-download", host->id);
+    copy_text(r->filename, sizeof r->filename, name);
+    copy_text(r->title, sizeof r->title, name);
+    copy_text(r->game_id, sizeof r->game_id, "custom");
+    copy_text(r->source, sizeof r->source, host->id);
+    copy_text(r->url, sizeof r->url, url);
+    release_classify_local(r);
+}
+static void remember_locked(const Release *r) {
+    pending[pending_next] = *r;
+    pending_next = (pending_next + 1) % PENDING_MAX;
+}
+static void provider_fields(cJSON *o, const HostAdapter *host) {
+    cJSON_AddStringToObject(o, "provider", host->id);
+    cJSON_AddStringToObject(o, "providerLabel", host->label);
 }
 
 static cJSON *run_resolve(const Request *q) {
@@ -116,6 +123,26 @@ static cJSON *run_resolve(const Request *q) {
     }
     Resolved res = {0};
     bool browser = host->kind == HOST_BROWSER;
+    if (host->kind == HOST_TORBOX) {
+        Release t;
+        char why[200] = {0};
+        torbox_release(&t, host, url);
+        pthread_mutex_lock(&orbit.mutex);
+        bool ok = debrid_release_supported(&t, why, sizeof why);
+        cJSON *o;
+        if (ok) {
+            remember_locked(&t);
+            o = state_json("ready", "Ready to download through TorBox. TorBox supplies the file name and size.");
+            describe(o, &t, false, false);
+        } else {
+            char message[400];
+            snprintf(message, sizeof message, "%s %s", host->note, why);
+            o = state_json("unsupported", message);
+            provider_fields(o, host);
+        }
+        pthread_mutex_unlock(&orbit.mutex);
+        return o;
+    }
     if (browser && !strcmp(host->id, "vikingfile")) {
         if (resolve_viking(url, &worker.cancel, &res, error, sizeof error)) return state_json("error", error);
     } else if (browser) {
@@ -123,9 +150,22 @@ static cJSON *run_resolve(const Request *q) {
          * captures the link, so a wrong entry fails safely instead of downloading the wrong file. */
         char clean[sizeof res.filename];
         if (!q->filename[0] || q->size < 1) {
-            cJSON *o = state_json("needs-details", "Enter the exact file name and size in bytes shown on the provider page.");
-            cJSON_AddStringToObject(o, "provider", host->id);
-            cJSON_AddStringToObject(o, "providerLabel", host->label);
+            Release t;
+            char why[200] = {0};
+            torbox_release(&t, host, url);
+            pthread_mutex_lock(&orbit.mutex);
+            bool tb = debrid_release_supported(&t, why, sizeof why);
+            if (tb) remember_locked(&t);
+            cJSON *o = state_json("needs-details", tb
+                ? "Download through TorBox now, or enter the exact file name and size shown on the provider page to use the PS5 browser."
+                : "Enter the exact file name and size in bytes shown on the provider page.");
+            provider_fields(o, host);
+            cJSON *delivery = cJSON_AddObjectToObject(o, "delivery");
+            cJSON_AddBoolToObject(delivery, "direct", false);
+            cJSON_AddBoolToObject(delivery, "torbox", tb);
+            cJSON_AddStringToObject(delivery, "torboxReason", tb ? "" : why);
+            if (tb) cJSON_AddStringToObject(o, "torboxReleaseId", t.id);
+            pthread_mutex_unlock(&orbit.mutex);
             return o;
         }
         if (!filename_sanitize(q->filename, clean, sizeof clean) || strcmp(clean, q->filename))
@@ -147,16 +187,15 @@ static cJSON *run_resolve(const Request *q) {
     copy_text(r.url, sizeof r.url, res.url);
     if (browser) copy_text(r.browser_url, sizeof r.browser_url, res.url);
     r.size = res.size;
-    classify(&r);
+    release_classify_local(&r);
     if (!provider_url_supported(&r) && !provider_browser_supported(&r))
         return state_json("error", "Orbit cannot download this link safely. Check the address and try again.");
     pthread_mutex_lock(&orbit.mutex);
-    pending[pending_next] = r;
-    pending_next = (pending_next + 1) % PENDING_MAX;
+    remember_locked(&r);
     cJSON *o = state_json(browser ? "needs-browser" : "ready",
         browser ? "Open the provider page on your PS5 and complete any verification."
                 : "Ready to download.");
-    describe(o, &r, res.ranges);
+    describe(o, &r, res.ranges, true);
     pthread_mutex_unlock(&orbit.mutex);
     return o;
 }

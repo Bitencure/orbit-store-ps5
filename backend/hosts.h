@@ -9,6 +9,7 @@ typedef enum {
     HOST_WEB,      /* Generic HTTPS file: any public DNS name, direct download. */
     HOST_DIRECT,   /* Known host serving the file directly; transfers limited to its domains. */
     HOST_BROWSER,  /* Needs the PS5 browser flow (verification); handled by browser.c. */
+    HOST_TORBOX,   /* Cannot be fetched directly; deliverable only through TorBox, which supports it. */
     HOST_DISABLED  /* Recognised, but no verified download flow: refuse with a reason. */
 } HostKind;
 
@@ -19,7 +20,7 @@ typedef struct {
     const char *const *domains;   /* Each entry matches itself and its subdomains. */
     HostKind kind;
     unsigned flag;                /* ORBIT_SOURCE_* bit, 0 when the host has no toggle. */
-    const char *note;             /* Reason shown when kind == HOST_DISABLED. */
+    const char *note;             /* Why Orbit cannot fetch it directly (HOST_TORBOX, HOST_DISABLED). */
 } HostAdapter;
 
 const HostAdapter *host_by_id(const char *id);

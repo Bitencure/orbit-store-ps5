@@ -58,6 +58,8 @@ int main(void) {
     CHECK_STR(id_of("https://gofile.io/d/AbCdEf"), "gofile");
     CHECK_STR(id_of("https://fileditch.com/abc/file.bin"), "fileditch");
     CHECK_STR(id_of("https://new.fileditch.com/x"), "fileditch");
+    CHECK_STR(id_of("https://itsfileditchfiles.st/balpha34/abc/x.bin"), "fileditch");
+    CHECK_STR(id_of("https://fileditchvids.st/a/b/c.mp4"), "fileditch");
     CHECK_STR(id_of("https://fuckingfast.co/abc"), "fuckingfast");
     CHECK_STR(id_of("https://rootz.so/file/abc"), "rootz");
     CHECK_STR(id_of("https://downloads.example.org/a.bin"), "web");
@@ -95,14 +97,13 @@ int main(void) {
     CHECK(!host_name_ok("1.2.3.4") && !host_name_ok("127.1") && !host_name_ok("localhost"));
     /* Which kinds are downloadable. */
     CHECK(host_by_id("web")->kind == HOST_WEB);
-    CHECK(host_by_id("fileditch")->kind == HOST_DIRECT);
+    CHECK(host_by_id("fileditch")->kind == HOST_DISABLED && *host_by_id("fileditch")->note);
     CHECK(host_by_id("rootz")->kind == HOST_DISABLED && *host_by_id("rootz")->note);
-    CHECK(host_by_id("fuckingfast")->kind == HOST_DISABLED);
-    CHECK(host_by_id("gofile")->kind == HOST_DISABLED);
+    CHECK(host_by_id("fuckingfast")->kind == HOST_TORBOX && host_by_id("gofile")->kind == HOST_TORBOX);
     CHECK(host_by_id("vikingfile")->kind == HOST_BROWSER);
     CHECK(!host_by_id("nonsense") && !host_by_id(NULL));
-    CHECK(!provider_direct_source("vikingfile") && provider_direct_source("web") && provider_direct_source("fileditch"));
-    CHECK(!provider_direct_source("rootz") && !provider_direct_source("gofile"));
+    CHECK(!provider_direct_source("vikingfile") && provider_direct_source("web"));
+    CHECK(!provider_direct_source("fileditch") && !provider_direct_source("rootz") && !provider_direct_source("gofile") && !provider_direct_source("fuckingfast"));
 
     /* 1fichier alias canonicalisation. */
     char out[256];
@@ -118,9 +119,8 @@ int main(void) {
     CHECK(!allowed("web", true, "http://cdn.example.org/a.bin"));
     CHECK(!allowed("web", true, "https://203.0.113.9/a.bin"));
     CHECK(!allowed("web", true, "https://u:p@cdn.example.org/a.bin"));
-    CHECK(allowed("fileditch", true, "https://new.fileditch.com/a.bin"));
+    CHECK(!allowed("fileditch", true, "https://new.fileditch.com/a.bin"));
     CHECK(!allowed("fileditch", true, "https://cdn.example.org/a.bin"));
-    CHECK(!allowed("fileditch", true, "https://fileditch.com.evil.example/a.bin"));
     CHECK(!allowed("fileditch", true, "https://vikingfile.com/d/abcdefghij/a.bin"));
     CHECK(!allowed("rootz", true, "https://rootz.so/a.bin"));
     CHECK(!allowed("gofile", true, "https://store1.gofile.io/a.bin"));

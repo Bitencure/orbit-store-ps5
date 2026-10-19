@@ -2,6 +2,7 @@
 #include "hosts.h"
 #include "provider_network.h"
 #include <ctype.h>
+#include <stdio.h>
 #include <string.h>
 #include <strings.h>
 bool provider_browser_source(const char *source) {
@@ -32,6 +33,32 @@ static bool local_file(const Release *r) {
             return false;
     } else if (r->archive_unverified || r->extracted_size) return false;
     return true;
+}
+bool provider_torbox_supported(const Release *r) {
+    char clean[sizeof r->filename];
+    if (!r || !r->local || (r->size < 1 && !(r->size_pending && r->size == 0)) || r->size < 0 ||
+        !filename_sanitize(r->filename, clean, sizeof clean) || strcmp(clean, r->filename))
+        return false;
+    const HostAdapter *h = host_for_url(r->url);
+    return h && h->kind != HOST_DISABLED && !strcmp(h->id, r->source);
+}
+void release_classify_local(Release *r) {
+    size_t n = strlen(r->filename);
+    const char *dot = strrchr(r->filename, '.');
+    const char *ext = dot && n - (size_t)(dot - r->filename) <= 8 ? dot : "";
+    r->compression[0] = 0;
+    r->archive_unverified = false;
+    /* Archives are inspected after download, exactly like unverified catalogue archives. */
+    if (!strcasecmp(ext, ".zip") || !strcasecmp(ext, ".7z") || !strcasecmp(ext, ".rar")) {
+        snprintf(r->compression, sizeof r->compression, "%s", ext + 1);
+        for (char *c = r->compression; *c; c++) *c = (char)tolower((unsigned char)*c);
+        snprintf(r->format, sizeof r->format, "Unknown");
+        r->archive_unverified = true;
+    } else {
+        snprintf(r->format, sizeof r->format, "%s",
+                 !strcasecmp(ext, ".pkg") ? "PKG" : !strcasecmp(ext, ".exfat") ? "exFAT" :
+                 !strcasecmp(ext, ".ffpfsc") ? "FFPFSC" : "File");
+    }
 }
 static bool browser_file(const Release *r) {
     if (r->local) return provider_browser_source(r->source) && local_file(r);
@@ -261,6 +288,10 @@ bool provider_capture_url(const Release *release, const char *candidate) {
 /* Fixed hosts for catalogue/browser providers; adapter domains for user-added direct links.
  * Every hop of a redirect chain is checked here, and sockets still refuse private addresses. */
 bool provider_transfer_allowed(const Release *release, const char *url) {
+    /* A user-added link on a host that is not fetched directly or through the browser flow
+     * (TorBox-only and unsupported hosts) never gets a direct transfer address. */
+    if (release && release->local && !provider_direct_source(release->source) && !provider_browser_source(release->source))
+        return false;
     if (!release || !release->local || !provider_direct_source(release->source))
         return provider_transfer_url_allowed(url);
     char name[256];

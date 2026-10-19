@@ -80,6 +80,11 @@ int release_parse_ex(const cJSON *x, Release *r, bool diagnostic, bool allow_loc
         if (!allow_local || !cJSON_IsString(origin) || strcmp(origin->valuestring, "local")) return -1;
         r->local = true;
     }
+    const cJSON *pending = cJSON_GetObjectItemCaseSensitive(x, "sizePending");
+    if (pending) {
+        if (!r->local || !cJSON_IsBool(pending)) return -1;
+        r->size_pending = cJSON_IsTrue(pending);
+    }
 #define FIELD(k, f, required) if (!text_field(x, k, r->f, sizeof r->f, required)) return -1
     FIELD("id", id, true);
     FIELD("title", title, true);
@@ -97,7 +102,7 @@ int release_parse_ex(const cJSON *x, Release *r, bool diagnostic, bool allow_loc
 #undef FIELD
     const cJSON *size = cJSON_GetObjectItemCaseSensitive(x, "sizeBytes");
     if (!identifier(r->id) || !cJSON_IsNumber(size) || !isfinite(size->valuedouble) ||
-        size->valuedouble < 1 || size->valuedouble > 9007199254740991.0 ||
+        size->valuedouble < (r->size_pending ? 0 : 1) || (r->size_pending && size->valuedouble != 0) || size->valuedouble > 9007199254740991.0 ||
         floor(size->valuedouble) != size->valuedouble || strchr(r->filename, '/') ||
         strchr(r->filename, '\\') || strstr(r->filename, ".."))
         return -1;
@@ -148,7 +153,7 @@ int release_parse_ex(const cJSON *x, Release *r, bool diagnostic, bool allow_loc
 #ifdef ORBIT_TEST
         if (provider_supported(r)) return 0;
 #endif
-        return (provider_url_supported(r) || provider_browser_supported(r)) &&
+        return (provider_url_supported(r) || provider_browser_supported(r) || provider_torbox_supported(r)) &&
             (!r->browser_url[0] || provider_browser_supported(r)) ? 0 : -1;
     }
     if (!identifier(r->game_id) || !*r->title_id ||
@@ -182,6 +187,7 @@ cJSON *release_json(const Release *r) {
     FIELD("sha256", sha256); FIELD("sourceId", source); FIELD("format", format);
     if (r->browser_url[0]) { FIELD("browserUrl", browser_url); }
     if (r->local) cJSON_AddStringToObject(o, "origin", "local");
+    if (r->size_pending) cJSON_AddBoolToObject(o, "sizePending", true);
     if (r->compression[0]) {
         FIELD("compression", compression);
         if (r->archive_password[0]) { FIELD("archivePassword", archive_password); }

@@ -20,7 +20,7 @@ typedef struct {
     long status;
     int64_t length, start, end, total;
     char etag[256], modified[128], type[128], disposition[512], error[256];
-    bool done;
+    bool done, challenge;
 } Probe;
 
 static void trim_copy(char *out, size_t cap, const char *s, size_t n) {
@@ -48,6 +48,11 @@ static size_t probe_header(char *s, size_t a, size_t b, void *arg) {
         /* libcurl reports every response of a redirect chain; none describes the next. */
         p->length = p->start = p->end = p->total = -1;
         p->etag[0] = p->modified[0] = p->type[0] = p->disposition[0] = p->error[0] = 0;
+        p->challenge = false;
+    } else if (n > 13 && !strncasecmp(s, "cf-mitigated:", 13)) {
+        char value[32];
+        trim_copy(value, sizeof value, s + 13, n - 13);
+        p->challenge = lower_contains(value, "challenge");
     } else if (n > 15 && !strncasecmp(s, "Content-Length:", 15)) {
         p->length = strtoll(s + 15, NULL, 10);
     } else if (n > 14 && !strncasecmp(s, "Content-Range:", 14)) {
@@ -167,6 +172,11 @@ int resolve_direct(const HostAdapter *host, const char *url, const char *wanted_
     if (cancel && atomic_load(cancel)) { copy_text(error, cap, "Cancelled."); return -1; }
     if (!p.done) {
         snprintf(error, cap, "Could not reach the host (%s).", curl_easy_strerror(rc));
+        return -1;
+    }
+    if (p.challenge) {
+        /* Cloudflare is asking a person to prove they are one. Orbit does not try to answer that. */
+        copy_text(error, cap, "This host is asking for human verification (Cloudflare), which Orbit cannot complete. Open the link in a browser instead, or use TorBox if it supports this host.");
         return -1;
     }
     if (p.status != 200 && p.status != 206) { http_message(p.status, error, cap); return -1; }

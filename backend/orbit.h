@@ -34,9 +34,9 @@
 /* Fork providers. Flags only grow, so an official build still reads the low bits. */
 #define ORBIT_SOURCE_WEB 32U
 #define ORBIT_SOURCE_GOFILE 64U
-#define ORBIT_SOURCE_FILEDITCH 128U
-#define ORBIT_SOURCE_ALL (ORBIT_SOURCE_ARCHIVE | ORBIT_SOURCE_VIKINGFILE | ORBIT_SOURCE_AKIRABOX | ORBIT_SOURCE_DATANODES | ORBIT_SOURCE_ONEFICHIER | ORBIT_SOURCE_WEB | ORBIT_SOURCE_GOFILE | ORBIT_SOURCE_FILEDITCH)
-#define ORBIT_MAX_SOURCES 8
+#define ORBIT_SOURCE_FUCKINGFAST 128U
+#define ORBIT_SOURCE_ALL (ORBIT_SOURCE_ARCHIVE | ORBIT_SOURCE_VIKINGFILE | ORBIT_SOURCE_AKIRABOX | ORBIT_SOURCE_DATANODES | ORBIT_SOURCE_ONEFICHIER | ORBIT_SOURCE_WEB | ORBIT_SOURCE_GOFILE | ORBIT_SOURCE_FUCKINGFAST)
+#define ORBIT_MAX_SOURCES 9
 typedef struct {
     unsigned enabled, notice_version;
     time_t acknowledged_at;
@@ -49,7 +49,8 @@ typedef struct {
     char archive_password[129]; /* Public source password, optional. */
     int64_t size, extracted_size;
     bool archive_unverified; /* Identity checked; contents inspected after download. */
-    bool local; /* User-added link or imported custom catalogue; never from the signed feed. */
+    bool local; /* User-added link; never from the signed feed. */
+    bool size_pending; /* Local TorBox-only link: TorBox reports the real name and size. */
 } Release;
 typedef struct {
     char id[24], label[64], root[512];
@@ -161,6 +162,10 @@ bool provider_transfer_allowed(const Release *release, const char *url);
 /* True when transfers for this release run through the guarded (allowlist + SSRF) path. */
 bool provider_guarded(const Release *release);
 bool provider_direct_source(const char *source);
+/* A local link TorBox may fetch: valid URL for its provider, known size or size_pending. */
+bool provider_torbox_supported(const Release *release);
+/* Fork: classify a pasted file by extension (archives are inspected after download). */
+void release_classify_local(Release *release);
 bool provider_browser_source(const char *source);
 int browser_start(void);
 void browser_stop(void);

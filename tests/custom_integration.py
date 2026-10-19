@@ -20,6 +20,7 @@ import threading
 import time
 import unittest
 import urllib.error
+import urllib.parse
 import urllib.request
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -41,6 +42,31 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def do_HEAD(self):
         self.route(False)
+
+    def do_POST(self):
+        length = int(self.headers.get('Content-Length') or 0)
+        form = self.rfile.read(length).decode() if length else ''
+        with self.server.lock:
+            self.server.log.append(('POST', self.path, None, form))
+        if self.path.split('?')[0] == '/viking/check-file':
+            gone = 'hash=gonegonegone' in form
+            body = json.dumps({'exist': not gone, 'hash': form.split('=')[-1], 'name': 'viking-sample.bin', 'size': len(DATA)}).encode()
+            return self.reply(200, {'Content-Type': 'application/json'}, body)
+        self.reply(404, {'Content-Type': 'text/plain'}, b'unknown')
+
+    def serve_data(self, data, send_body, rng, if_match, extra):
+        headers = {'Content-Type': 'application/octet-stream', 'ETag': ETAG, 'Last-Modified': MODIFIED, 'Accept-Ranges': 'bytes', **extra}
+        start, end, status = 0, len(data) - 1, 200
+        match = re.fullmatch(r'bytes=(\d*)-(\d*)', rng or '')
+        if match:
+            first, last = match.groups()
+            start = int(first) if first else 0
+            end = min(int(last), len(data) - 1) if last else len(data) - 1
+            status = 206
+            headers['Content-Range'] = f'bytes {start}-{end}/{len(data)}'
+        body = data[start:end + 1]
+        headers['Content-Length'] = str(len(body))
+        self.reply(status, headers, body, send_body)
 
     def reply(self, status, headers, body=b'', send_body=True):
         self.send_response(status)
@@ -76,6 +102,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path in simple:
             status, headers, body = simple[path]
             return self.reply(status, headers, body, send_body)
+        if path.startswith('/torbox-cdn/'):
+            name = path.rsplit('/', 1)[1]
+            return self.serve_data(DATA, send_body, rng, if_match, {'Content-Disposition': f'attachment; filename="{name}"'})
         disposition = {
             '/disp-plain': 'attachment; filename="Report 1.bin"',
             '/disp-star': "attachment; filename=\"fallback.bin\"; filename*=UTF-8''%E2%82%AC%20price.bin",
@@ -346,12 +375,17 @@ class SourceGate(Base):
         self.assertNotIn('releaseId', reply)
         self.assertEqual(self.origin.requests('/file.bin'), [], 'nothing may be fetched before consent')
 
-    def test_recognised_but_unverified_hosts_are_refused_with_a_reason(self):
-        for url, provider in [('https://rootz.so/file/abc', 'rootz'), ('https://fuckingfast.co/abc', 'fuckingfast'),
-                              ('https://gofile.io/d/abc', 'gofile')]:
+    def test_hosts_without_a_working_flow_are_refused_with_a_reason(self):
+        for url, provider in [('https://rootz.so/file/abc', 'rootz'), ('https://new.fileditch.com/a/b.bin', 'fileditch'),
+                              ('https://itsfileditchfiles.st/balpha34/abc/x.bin', 'fileditch')]:
             reply = self.service.resolve(url)
             self.assertEqual((reply['state'], reply['provider']), ('unsupported', provider), reply)
             self.assertTrue(reply['message'])
+        self.assertIn('Cloudflare', self.service.resolve('https://new.fileditch.com/a/b.bin')['message'])
+
+    def test_torbox_only_hosts_need_their_toggle_first(self):
+        for url in ('https://gofile.io/d/AbCdEf', 'https://fuckingfast.co/abc'):
+            self.assertEqual(self.service.resolve(url)['state'], 'source-disabled', url)
 
 
 class Resolve(Base):
@@ -582,6 +616,7 @@ class LinkCatalogue(Base):
             {'title': 'Bad title id', 'titleId': 'PPSA1', 'url': 'https://downloads.example.org/b.exfat'},
             {'title': 'Rootz', 'url': 'https://rootz.so/file/abc'},
             {'title': 'Not https', 'url': 'http://downloads.example.org/c.bin'},
+            {'title': 'Gofile', 'url': 'https://gofile.io/d/AbCdEf'},
             {'title': 'Fileditch', 'url': 'https://new.fileditch.com/x/y.bin', 'filename': 'y.bin', 'sizeBytes': 12},
             {'url': 'https://downloads.example.org/d.bin'},
             {'title': 'Unsafe name', 'url': 'https://downloads.example.org/e.bin', 'filename': '../e.bin'},
@@ -593,9 +628,10 @@ class LinkCatalogue(Base):
         self.assertEqual(status, 200, body)
         self.assertEqual(body['result']['imported'], 2)
         rejected = {r['index']: r['reason'] for r in body['result']['rejected']}
-        self.assertEqual(sorted(rejected), [1, 2, 3, 5, 6])
-        self.assertIn('Rootz', rejected[2] + 'Rootz')
-        self.assertEqual({l['title'] for l in body['links']}, {'Mine A', 'Fileditch'})
+        self.assertEqual(sorted(rejected), [1, 2, 3, 5, 6, 7])
+        self.assertIn('human-verification', rejected[5])
+        self.assertIn('no verifiable', rejected[2])
+        self.assertEqual({l['title'] for l in body['links']}, {'Mine A', 'Gofile'})
         self.assertTrue(all(l['id'].startswith('link-') for l in body['links']))
 
     def test_merge_replace_remove_and_clear(self):
@@ -681,6 +717,205 @@ class Persistence(Base):
         state = json.loads((self.service.state / 'state.json').read_text()) if (self.service.state / 'state.json').exists() else {'schema': 4}
         if not any(j['release'].get('origin') == 'local' for j in state.get('jobs', [])):
             self.assertLessEqual(state['schema'], 6)
+
+
+
+class TorBoxMock(socketserver.ThreadingMixIn, http.server.HTTPServer):
+    """Just enough of TorBox's web-download API for one finished single-file download."""
+    daemon_threads = True
+    allow_reuse_address = True
+
+    def __init__(self, origin, domains):
+        super().__init__(('127.0.0.1', 0), TorBoxHandler)
+        self.origin, self.domains, self.items, self.calls = origin, domains, {}, []
+        threading.Thread(target=self.serve_forever, daemon=True).start()
+
+    @property
+    def base(self):
+        return f'http://127.0.0.1:{self.server_address[1]}'
+
+
+class TorBoxHandler(http.server.BaseHTTPRequestHandler):
+    protocol_version = 'HTTP/1.1'
+    NAME = 'torbox-sample.bin'
+
+    def log_message(self, *args):
+        pass
+
+    def send_json(self, data):
+        body = json.dumps({'success': True, 'data': data}).encode()
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def item(self, ident, link):
+        return {'id': ident, 'original_url': link, 'download_state': 'completed', 'download_present': True,
+                'download_finished': True, 'files': [{'id': 1, 'name': self.NAME, 'short_name': self.NAME,
+                                                      'size': len(DATA), 'infected': False, 'zipped': False}]}
+
+    def do_POST(self):
+        length = int(self.headers.get('Content-Length') or 0)
+        form = urllib.parse.parse_qs(self.rfile.read(length).decode())
+        self.server.calls.append(('POST', self.path, form))
+        if self.path.startswith('/webdl/createwebdownload'):
+            link = form['link'][0]
+            self.server.items[77] = link
+            return self.send_json({'webdownload_id': 77})
+        self.send_json({})
+
+    def do_GET(self):
+        path, _, query = self.path.partition('?')
+        args = urllib.parse.parse_qs(query)
+        self.server.calls.append(('GET', self.path, None))
+        if path == '/user/me':
+            return self.send_json({'id': 4242})
+        if path == '/webdl/hosters':
+            return self.send_json([{'name': d, 'domains': [d], 'status': True, 'per_link_size_limit': 0,
+                                    'daily_bandwidth_limit': 0, 'daily_link_limit': 0} for d in self.server.domains])
+        if path == '/webdl/mylist':
+            items = [self.item(i, link) for i, link in self.server.items.items()]
+            return self.send_json(items[0] if 'id' in args and items else items)
+        if path == '/webdl/requestdl':
+            return self.send_json(f'{self.server.origin.base}/torbox-cdn/{self.NAME}')
+        self.send_json({})
+
+
+class TorBoxBase(Base):
+    sources = ('gofile', 'fuckingfast', '1fichier')
+    domains = ['gofile.io', '1fichier.com', '127.0.0.1']
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.origin = Origin()
+        cls.torbox = TorBoxMock(cls.origin, cls.domains)
+        cls.service = Service(cls.tmp.name, cls.origin)
+        cls.service.start({'ORBIT_TEST_TORBOX_URL': cls.torbox.base})
+        cls.service.enable(*cls.sources)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.torbox.shutdown()
+        super().tearDownClass()
+
+    def connect(self):
+        state = self.service.call('GET', '/api/v1/debrid')[1]
+        if state['connected'] and not state['busy'] and state['checkedAt']:
+            return state  # TorBox itself limits how often an account may be rechecked
+        time.sleep(max(0, state.get('retryAt', 0) - time.time()) + 0.5)
+        status, body = self.service.call('POST', '/api/v1/debrid', {'action': 'connect', 'apiKey': 'k' * 24})
+        self.assertEqual(status, 202, body)
+        deadline = time.time() + 20
+        while time.time() < deadline:
+            state = self.service.call('GET', '/api/v1/debrid')[1]
+            if state['connected'] and not state['busy']:
+                return state
+            time.sleep(0.2)
+        self.fail('TorBox did not connect')
+
+
+class TorBoxLinks(TorBoxBase):
+    def test_a_1_torbox_must_be_connected_first(self):
+        reply = self.service.resolve('https://gofile.io/d/AbCdEf')
+        self.assertEqual(reply['state'], 'unsupported', reply)
+        self.assertIn('Connect TorBox', reply['message'])
+        self.assertIn('premium', reply['message'])
+        details = self.service.resolve('https://1fichier.com/?abcdefghij0123456789')
+        self.assertEqual(details['state'], 'needs-details', details)
+        self.assertNotIn('torboxReleaseId', details)
+        self.assertFalse(details['delivery']['torbox'])
+
+    def test_a_2_hosts_torbox_does_not_list_are_refused(self):
+        self.connect()
+        reply = self.service.resolve('https://fuckingfast.co/abc')
+        self.assertEqual(reply['state'], 'unsupported', reply)
+        self.assertIn('does not list', reply['message'])
+
+    def test_b_1_unknown_details_can_be_delivered_by_torbox(self):
+        self.connect()
+        reply = self.service.resolve('https://1fichier.com/?abcdefghij0123456789')
+        self.assertEqual(reply['state'], 'needs-details', reply)
+        self.assertTrue(reply['delivery']['torbox'])
+        self.assertTrue(reply['torboxReleaseId'].startswith('custom-'))
+
+    def test_c_torbox_only_download_adopts_torbox_name_and_size(self):
+        self.connect()
+        reply = self.service.resolve('https://gofile.io/d/AbCdEf')
+        self.assertEqual(reply['state'], 'ready', reply)
+        self.assertEqual((reply['delivery']['torbox'], reply['delivery']['direct'], reply['sizePending']), (True, False, True))
+        # Direct delivery of a TorBox-only host must be impossible.
+        status, body = self.service.queue(reply['releaseId'], 'direct')
+        self.assertEqual(status, 409, body)
+        status, body = self.service.queue(reply['releaseId'], 'torbox')
+        self.assertEqual(status, 201, body)
+        job = self.service.wait_job(body['id'], {'complete', 'error'}, 150)
+        self.assertEqual(job['status'], 'complete', job)
+        self.assertEqual((job['filename'], job['total']), (TorBoxHandler.NAME, len(DATA)), job)
+        self.assertEqual(job['delivery'], 'torbox')
+        self.assertEqual(sha256_file(job['path']), hashlib.sha256(DATA).hexdigest())
+        folder = pathlib.Path(job['path']).parent
+        self.assertEqual([p.name for p in folder.glob('*.part')], [], 'no placeholder partial may be left behind')
+        created = [c for c in self.torbox.calls if c[1].startswith('/webdl/createwebdownload')]
+        self.assertEqual(len(created), 1)
+        self.assertEqual(created[0][2]['link'][0], 'https://gofile.io/d/AbCdEf')
+
+
+class TorBoxNameClash(TorBoxBase):
+    sources = ('gofile',)
+
+    def test_a_name_that_already_exists_is_never_overwritten(self):
+        self.connect()
+        folder = self.service.storage / 'homebrew'
+        folder.mkdir(exist_ok=True)
+        existing = folder / TorBoxHandler.NAME
+        existing.write_bytes(b'keep me')
+        reply = self.service.resolve('https://gofile.io/d/ClashX')
+        status, body = self.service.queue(reply['releaseId'], 'torbox')
+        self.assertEqual(status, 201, body)
+        job = self.service.wait_job(body['id'], {'complete', 'error'}, 120)
+        self.assertEqual(job['status'], 'error', job)
+        self.assertIn('already uses TorBox', job['error'])
+        self.assertEqual(existing.read_bytes(), b'keep me')
+        self.assertEqual([p.name for p in folder.glob('*.part')], [])
+
+
+class VikingPastedLinks(Base):
+    sources = ('vikingfile',)
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.origin = Origin()
+        cls.service = Service(cls.tmp.name, cls.origin)
+        cls.service.start({'ORBIT_TEST_VIKING_API': cls.origin.base + '/viking/check-file',
+                           'ORBIT_TEST_CAPTURE_URL': cls.origin.base + '/file.bin'})
+        cls.service.enable(*cls.sources)
+
+    def test_listing_gives_name_and_size_then_the_browser_flow_queues_it(self):
+        reply = self.service.resolve('https://vikingfile.com/f/abcdefghij')
+        self.assertEqual(reply['state'], 'needs-browser', reply)
+        self.assertEqual((reply['filename'], reply['sizeBytes'], reply['viaBrowser']), ('viking-sample.bin', len(DATA), True))
+        status, body = self.service.call('POST', '/api/v1/browser', {
+            'action': 'start', 'releaseId': reply['releaseId'], 'storageId': self.service.storage_id(), 'returnTarget': 'browser'})
+        self.assertEqual(status, 202, body)
+        deadline = time.time() + 60
+        state = {}
+        while time.time() < deadline:
+            state = self.service.call('GET', '/api/v1/browser')[1]
+            if state['state'] in ('queued', 'failed', 'cancelled'):
+                break
+            time.sleep(0.3)
+        self.assertEqual(state['state'], 'queued', state)
+        job = self.service.wait_job(state['jobId'], {'complete', 'error'}, 90)
+        self.assertEqual(job['status'], 'complete', job)
+        self.assertEqual(sha256_file(job['path']), hashlib.sha256(DATA).hexdigest())
+        self.assertEqual((job['sourceId'], job['origin']), ('vikingfile', 'local'))
+
+    def test_removed_files_and_bad_links_are_reported(self):
+        self.assertEqual(self.service.resolve('https://vikingfile.com/f/gonegonegone')['state'], 'error')
+        self.assertEqual(self.service.resolve('https://vikingfile.com/f/short')['state'], 'error')
 
 
 if __name__ == '__main__':

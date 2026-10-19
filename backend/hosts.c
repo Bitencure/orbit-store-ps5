@@ -13,7 +13,8 @@ static const char *const fichier_domains[] = {"1fichier.com", "alterupload.com",
     "dfichiers.com", "megadl.fr", "mesfichiers.org", "piecejointe.net", "pjointe.com", "tenvoi.com", "dl4free.com", NULL};
 static const char *const archive_domains[] = {"archive.org", NULL};
 static const char *const gofile_domains[] = {"gofile.io", NULL};
-static const char *const ditch_domains[] = {"fileditch.com", NULL};
+/* Upload responses name itsfileditchfiles.st; its docs also name the other two. */
+static const char *const ditch_domains[] = {"fileditch.com", "itsfileditchfiles.st", "fileditchfiles.st", "fileditchvids.st", NULL};
 static const char *const fast_domains[] = {"fuckingfast.co", NULL};
 static const char *const rootz_domains[] = {"rootz.so", NULL};
 static const char *const no_domains[] = {NULL};
@@ -27,11 +28,12 @@ static const HostAdapter hosts[] = {
     {"1fichier", "1Fichier", "1fichier", fichier_domains, HOST_BROWSER, ORBIT_SOURCE_ONEFICHIER, ""},
     {"archive", "Archive.org", "archive", archive_domains, HOST_DISABLED, ORBIT_SOURCE_ARCHIVE,
      "Archive.org links are added from the catalogue. Paste other direct links instead."},
-    {"gofile", "Gofile", "gofile1", gofile_domains, HOST_DISABLED, ORBIT_SOURCE_GOFILE,
-     "Gofile is recognised, but its download flow is not verified in this build."},
-    {"fileditch", "FileDitch", "dith fileditch1 ditch", ditch_domains, HOST_DIRECT, ORBIT_SOURCE_FILEDITCH, ""},
-    {"fuckingfast", "FuckingFast", "fuckingfast1 fast", fast_domains, HOST_DISABLED, 0,
-     "FuckingFast needs Cloudflare verification and its download flow is not verified in this build."},
+    {"gofile", "Gofile", "gofile1", gofile_domains, HOST_TORBOX, ORBIT_SOURCE_GOFILE,
+     "Gofile does not allow scripted downloads without a premium account (its API answered error-notPremium on 2026-10-20). Use TorBox for Gofile links."},
+    {"fileditch", "FileDitch", "dith fileditch1 ditch", ditch_domains, HOST_DISABLED, 0,
+     "FileDitch file links are behind a Cloudflare human-verification challenge that Orbit cannot complete (observed 2026-10-20). Open the link in a browser instead."},
+    {"fuckingfast", "FuckingFast", "fuckingfast1 fast", fast_domains, HOST_TORBOX, ORBIT_SOURCE_FUCKINGFAST,
+     "FuckingFast needs a Cloudflare human-verification step that Orbit cannot complete. Use TorBox for FuckingFast links."},
     {"rootz", "Rootz", "rootz1", rootz_domains, HOST_DISABLED, 0,
      "Rootz is recognised, but no verifiable public download flow exists for it yet."},
     {"web", "Direct link", "http https direct", no_domains, HOST_WEB, ORBIT_SOURCE_WEB, ""},
