@@ -317,6 +317,9 @@ int main(int argc, char **argv) {
     diagnostics_stage("browser", "started", 0);
     startup_result = browser_start();
     diagnostics_stage("browser", startup_result ? "error" : "ok", startup_result);
+    startup_result = custom_start();
+    if (startup_result)
+        puts("Saved links could not be read; the server remains available.");
     diagnostics_stage("library", "started", 0);
     startup_result = library_start();
     diagnostics_stage("library", startup_result ? "error" : "ok", startup_result);
@@ -365,6 +368,7 @@ int main(int argc, char **argv) {
     archive_account_clear();
     tvapp_stop();
     browser_stop();
+    custom_stop();
     library_stop();
     updates_stop();
     catalog_stop();

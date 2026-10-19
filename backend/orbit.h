@@ -22,13 +22,21 @@
 #define ORBIT_MAX_RANGES 8
 #endif
 #define ORBIT_VERSION "1.3.5"
+/* Unofficial fork identity. ORBIT_VERSION must stay the upstream protocol version:
+ * the native app and updater compare it. The tag is shown separately. */
+#define ORBIT_FORK_TAG "custom.1"
 #define ORBIT_SOURCE_NOTICE_VERSION 1
 #define ORBIT_SOURCE_ARCHIVE 1U
 #define ORBIT_SOURCE_VIKINGFILE 2U
 #define ORBIT_SOURCE_AKIRABOX 4U
 #define ORBIT_SOURCE_DATANODES 8U
 #define ORBIT_SOURCE_ONEFICHIER 16U
-#define ORBIT_SOURCE_ALL (ORBIT_SOURCE_ARCHIVE | ORBIT_SOURCE_VIKINGFILE | ORBIT_SOURCE_AKIRABOX | ORBIT_SOURCE_DATANODES | ORBIT_SOURCE_ONEFICHIER)
+/* Fork providers. Flags only grow, so an official build still reads the low bits. */
+#define ORBIT_SOURCE_WEB 32U
+#define ORBIT_SOURCE_GOFILE 64U
+#define ORBIT_SOURCE_FILEDITCH 128U
+#define ORBIT_SOURCE_ALL (ORBIT_SOURCE_ARCHIVE | ORBIT_SOURCE_VIKINGFILE | ORBIT_SOURCE_AKIRABOX | ORBIT_SOURCE_DATANODES | ORBIT_SOURCE_ONEFICHIER | ORBIT_SOURCE_WEB | ORBIT_SOURCE_GOFILE | ORBIT_SOURCE_FILEDITCH)
+#define ORBIT_MAX_SOURCES 8
 typedef struct {
     unsigned enabled, notice_version;
     time_t acknowledged_at;
@@ -41,6 +49,7 @@ typedef struct {
     char archive_password[129]; /* Public source password, optional. */
     int64_t size, extracted_size;
     bool archive_unverified; /* Identity checked; contents inspected after download. */
+    bool local; /* User-added link or imported custom catalogue; never from the signed feed. */
 } Release;
 typedef struct {
     char id[24], label[64], root[512];
@@ -131,7 +140,11 @@ void random_hex(char *out, size_t bytes);
 int state_save_locked(void);
 int state_load(void);
 Release *release_find(const char *id);
+/* Fork: resolved-but-unqueued links and the imported custom catalogue (custom.c). */
+Release *custom_release_find(const char *id);
 int release_parse(const cJSON *entry, Release *release, bool diagnostic);
+/* allow_local also accepts "origin":"local" releases (queue state, custom catalogue). */
+int release_parse_ex(const cJSON *entry, Release *release, bool diagnostic, bool allow_local);
 cJSON *release_json(const Release *release);
 int catalog_init(void);
 void catalog_load_cache(void);
@@ -143,6 +156,11 @@ bool provider_supported(const Release *release);
 bool provider_url_supported(const Release *release);
 bool provider_browser_supported(const Release *release);
 bool provider_capture_url(const Release *release, const char *candidate);
+/* Release-aware transfer address check: adds user-added direct hosts to the fixed allowlist. */
+bool provider_transfer_allowed(const Release *release, const char *url);
+/* True when transfers for this release run through the guarded (allowlist + SSRF) path. */
+bool provider_guarded(const Release *release);
+bool provider_direct_source(const char *source);
 bool provider_browser_source(const char *source);
 int browser_start(void);
 void browser_stop(void);
@@ -180,6 +198,17 @@ int job_action_locked(Job *job, const char *action, bool remove, char *error, si
 int job_password_locked(Job *job, const char *password, char *error, size_t cap);
 int job_delete_partial_locked(Job *job, char *error, size_t cap);
 bool job_waiting(const Job *job);
+/* Fork: pasted links (custom.c, queue.c, sources.c). custom_action and the catalogue calls lock themselves. */
+int custom_start(void);
+void custom_stop(void);
+int custom_action(const cJSON *input, char *error, size_t cap);
+cJSON *custom_status(void);
+cJSON *custom_catalog_json(void);
+int custom_catalog_action(const cJSON *input, cJSON **reply, char *error, size_t cap);
+bool job_can_refresh_url(const Job *job);
+int job_refresh_url_locked(Job *job, const char *url, int64_t size, const char *etag,
+                           const char *modified, char *error, size_t cap);
+bool source_id_enabled_locked(const char *source);
 bool job_paths_overlap(const Job *a, const Job *b);
 bool job_active(const Job *job);
 uint64_t job_space_needed(const Release *release);

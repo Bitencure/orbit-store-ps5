@@ -68,9 +68,18 @@ static bool identifier(const char *id) {
     return true;
 }
 int release_parse(const cJSON *x, Release *r, bool diagnostic) {
+    return release_parse_ex(x, r, diagnostic, false);
+}
+int release_parse_ex(const cJSON *x, Release *r, bool diagnostic, bool allow_local) {
     memset(r, 0, sizeof *r);
     if (!cJSON_IsObject(x))
         return -1;
+    /* Only queue state and the user's own catalogue may claim "local". The signed feed never can. */
+    const cJSON *origin = cJSON_GetObjectItemCaseSensitive(x, "origin");
+    if (origin) {
+        if (!allow_local || !cJSON_IsString(origin) || strcmp(origin->valuestring, "local")) return -1;
+        r->local = true;
+    }
 #define FIELD(k, f, required) if (!text_field(x, k, r->f, sizeof r->f, required)) return -1
     FIELD("id", id, true);
     FIELD("title", title, true);
@@ -127,6 +136,21 @@ int release_parse(const cJSON *x, Release *r, bool diagnostic) {
             !strcmp(r->filename, "Orbit-connection-test.txt") &&
             !strcmp(r->url, "https://raw.githubusercontent.com/DaveGamble/cJSON/v1.7.19/LICENSE") &&
             !strcmp(r->sha256, "a36dda207c36db5818729c54e7ad4e8b0c6fba847491ba64f372c1a2037b6d5c") ? 0 : -1;
+    if (r->local) {
+        bool known_format = !strcmp(r->format, "File") || !strcmp(r->format, "PKG") || !strcmp(r->format, "FPKG") ||
+                            !strcmp(r->format, "exFAT") || !strcmp(r->format, "FFPFSC") || !strcmp(r->format, "Unknown");
+        if (strncmp(r->id, "custom-", 7) || !known_format || !*r->source || !identifier(r->game_id)) return -1;
+        if (*r->title_id) {
+            if (strlen(r->title_id) != 9 || (strncmp(r->title_id, "PPSA", 4) && strncmp(r->title_id, "CUSA", 4))) return -1;
+            for (int k = 4; k < 9; k++) if (!isdigit((unsigned char)r->title_id[k])) return -1;
+        }
+        if (*r->platform && strcmp(r->platform, "ps4") && strcmp(r->platform, "ps5")) return -1;
+#ifdef ORBIT_TEST
+        if (provider_supported(r)) return 0;
+#endif
+        return (provider_url_supported(r) || provider_browser_supported(r)) &&
+            (!r->browser_url[0] || provider_browser_supported(r)) ? 0 : -1;
+    }
     if (!identifier(r->game_id) || !*r->title_id ||
         (strcmp(r->format, "FFPFSC") && strcmp(r->format, "exFAT") && strcmp(r->format, "FPKG") && strcmp(r->format, "PKG") &&
          ((strcmp(r->format, "Game folder") || !r->compression[0]) && !r->archive_unverified)))
@@ -157,6 +181,7 @@ cJSON *release_json(const Release *r) {
     FIELD("platform", platform);
     FIELD("sha256", sha256); FIELD("sourceId", source); FIELD("format", format);
     if (r->browser_url[0]) { FIELD("browserUrl", browser_url); }
+    if (r->local) cJSON_AddStringToObject(o, "origin", "local");
     if (r->compression[0]) {
         FIELD("compression", compression);
         if (r->archive_password[0]) { FIELD("archivePassword", archive_password); }

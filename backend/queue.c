@@ -1,5 +1,6 @@
 #include "orbit.h"
 #include "debrid.h"
+#include "hosts.h"
 #include "extract.h"
 #include <errno.h>
 #include <fcntl.h>
@@ -394,6 +395,45 @@ int job_refresh_link_locked(Job *j, const Release *r, const Storage *pin,
     copy_text(j->release.url, sizeof j->release.url, r->url);
     copy_text(j->etag, sizeof j->etag, etag);
     copy_text(j->modified, sizeof j->modified, modified);
+    copy_text(j->status, sizeof j->status, "queued");
+    j->error[0] = 0; j->retry_at = 0; j->attempts = 0;
+    atomic_store(&j->pause, false); atomic_store(&j->cancel, false);
+    if (state_save_locked()) { *j = previous; copy_text(err, cap, "Could not persist the queue."); return 503; }
+    pthread_cond_broadcast(&orbit.changed);
+    return 200;
+}
+/* Fork: a pasted direct link has no browser step, so "refresh" means the user gives the
+ * same file a new address. It resumes only if size and validators prove it is identical. */
+bool job_can_refresh_url(const Job *j) {
+    return j && j->release.local && provider_direct_source(j->release.source) && strcmp(j->delivery, "torbox") &&
+        (!strcmp(j->status, "paused") || !strcmp(j->status, "error")) && !j->archive_ready &&
+        !(j->release.compression[0] && j->received >= j->total);
+}
+int job_refresh_url_locked(Job *j, const char *url, int64_t size, const char *etag,
+                           const char *modified, char *err, size_t cap) {
+    if (orbit.stop || orbit.state_failed) {
+        copy_text(err, cap, "Queue state cannot be saved. Try again after restarting Orbit."); return 503;
+    }
+    const HostAdapter *host = host_for_url(url);
+    if (!job_can_refresh_url(j) || !source_enabled_locked(&j->release) || !host || strcmp(host->id, j->release.source)) {
+        copy_text(err, cap, "This download cannot take a new link."); return 409;
+    }
+    if (size != j->total) {
+        copy_text(err, cap, "The file at the new link has a different size. Your partial file was kept."); return 409;
+    }
+    /* Without a validator the file cannot be proven identical, so only an untouched job may switch. */
+    if (j->etag[0] ? strcmp(j->etag, etag) : j->modified[0] ? strcmp(j->modified, modified) : j->received > 0) {
+        copy_text(err, cap, "Orbit cannot confirm the new link is the same file. Your partial file was kept."); return 409;
+    }
+    Release candidate = j->release;
+    copy_text(candidate.url, sizeof candidate.url, url);
+    if (!provider_url_supported(&candidate)) { copy_text(err, cap, "Orbit cannot download this link safely."); return 409; }
+    Job previous = *j;
+    copy_text(j->release.url, sizeof j->release.url, url);
+    if (!j->etag[0] && !j->modified[0]) {
+        copy_text(j->etag, sizeof j->etag, etag);
+        copy_text(j->modified, sizeof j->modified, modified);
+    }
     copy_text(j->status, sizeof j->status, "queued");
     j->error[0] = 0; j->retry_at = 0; j->attempts = 0;
     atomic_store(&j->pause, false); atomic_store(&j->cancel, false);

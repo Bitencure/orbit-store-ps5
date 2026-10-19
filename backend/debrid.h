@@ -12,4 +12,6 @@ int debrid_prepare_locked(const Release *release, Job *job, char *error, size_t 
 int debrid_resolve(Job *job, char *url, size_t url_cap, time_t *retry_at,
                    char *error, size_t cap);
 bool debrid_transfer_url_allowed(const char *url);
+/* Fork: can TorBox take this user-added link? Called under orbit.mutex; `why` says why not. */
+bool debrid_release_supported(const Release *release, char *why, size_t cap);
 #endif

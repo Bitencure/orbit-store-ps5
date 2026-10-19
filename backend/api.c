@@ -545,6 +545,30 @@ static enum MHD_Result route(struct MHD_Connection *c, const char *url, const ch
             cJSON_Delete(input);
             return code == 200 ? json_response(c, 200, archive_account_status()) : error(c, (unsigned)code, e);
         }
+        if (get && !strcmp(url, "/api/v1/custom/resolve")) {
+            cJSON_Delete(input);
+            return json_response(c, 200, custom_status());
+        }
+        if (post && !strcmp(url, "/api/v1/custom/resolve")) {
+            char e[256] = {0};
+            int code = custom_action(input, e, sizeof e);
+            cJSON_Delete(input);
+            return code == 202 || code == 200 ? json_response(c, 202, custom_status()) : error(c, (unsigned)code, e);
+        }
+        if (get && !strcmp(url, "/api/v1/custom/catalog")) {
+            cJSON_Delete(input);
+            return json_response(c, 200, custom_catalog_json());
+        }
+        if (post && !strcmp(url, "/api/v1/custom/catalog")) {
+            char e[256] = {0};
+            cJSON *reply = NULL;
+            int code = custom_catalog_action(input, &reply, e, sizeof e);
+            cJSON_Delete(input);
+            if (code != 200) return error(c, (unsigned)code, e);
+            cJSON *all = custom_catalog_json();
+            if (reply) cJSON_AddItemToObject(all, "result", reply);
+            return json_response(c, 200, all);
+        }
         if (get && !strcmp(url, "/api/v1/browser"))
             return json_response(c, 200, browser_status());
         if (post && !strcmp(url, "/api/v1/browser")) {
@@ -719,7 +743,9 @@ static enum MHD_Result handle(void *cls, struct MHD_Connection *c, const char *u
         Request *r = calloc(1, sizeof *r);
         if (!r) return MHD_NO;
         r->limit = 4096;
-        if (!strcmp(url,"/api/v1/receive/chunk") && authorized(c) && large_requests < 2) {
+        if (!strcmp(url, "/api/v1/custom/catalog") && authorized(c) && large_requests < 2) {
+            r->large = true; large_requests++; r->limit = 256 * 1024; /* A pasted or imported link list. */
+        } else if (!strcmp(url,"/api/v1/receive/chunk") && authorized(c) && large_requests < 2) {
             r->large = true; large_requests++; r->limit = ORBIT_RECEIVE_CHUNK;
         }
         r->body = malloc(r->limit + 1);

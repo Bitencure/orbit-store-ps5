@@ -138,6 +138,15 @@ build/orbit-providers-test: backend/providers.c backend/orbit.h tests/providers_
 test-viking: build/orbit-test build/orbit-providers-test
 	./build/orbit-providers-test
 	python3 tests/viking_integration.py
+# Fork: host table, URL checks, filenames and the socket guard, built without ORBIT_TEST
+# so the production allowlists are what runs.
+.PHONY: test-hosts test-custom
+build/orbit-hosts-test: backend/hosts.c backend/hosts.h backend/providers.c backend/provider_network.c backend/orbit.h tests/hosts_driver.c
+	$(HOST_CC) $(CPPFLAGS) $(CFLAGS) -DORBIT_DESKTOP backend/hosts.c backend/providers.c backend/provider_network.c tests/hosts_driver.c -o $@ -lcurl
+test-hosts: build/orbit-hosts-test
+	./build/orbit-hosts-test
+test-custom: build/orbit-test
+	python3 tests/custom_integration.py
 build/orbit-launcher-test: launcher/install.c launcher/install.h tests/launcher_driver.c build/generated/launcher.h
 	$(HOST_CC) $(CPPFLAGS) $(CFLAGS) launcher/install.c tests/launcher_driver.c -o $@
 build/orbit-launcher-platform-test: launcher/platform_ps5.c launcher/install.h tests/launcher_platform_driver.c tests/stubs/ps5/kernel.h

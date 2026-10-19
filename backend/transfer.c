@@ -56,9 +56,9 @@ typedef struct Transfer {
 #endif
 } Transfer;
 static bool torbox(const Transfer *t) { return !strcmp(t->job->delivery, "torbox"); }
-static bool guarded(const Transfer *t) { return torbox(t) || provider_browser_source(t->release->source); }
+static bool guarded(const Transfer *t) { return torbox(t) || provider_guarded(t->release); }
 static bool address_allowed(const Transfer *t, const char *url) {
-    return torbox(t) ? debrid_transfer_url_allowed(url) : provider_transfer_url_allowed(url);
+    return torbox(t) ? debrid_transfer_url_allowed(url) : provider_transfer_allowed(t->release, url);
 }
 static double seconds(void) {
     struct timespec t;
@@ -440,6 +440,14 @@ static int range_support(Transfer *owner, struct curl_slist *conditions, CURLcod
     curl_easy_cleanup(c);
     if (probe.unsupported_range) {
         *result = CURLE_OK;
+        if (owner->probe && guarded(owner) && owner->release->local) {
+            /* A user-added host may ignore Range and answer 200 with the full size.
+             * That still identifies the file; it just cannot resume or split. */
+            owner->status = probe.status;
+            owner->length = probe.length;
+            copy_text(owner->etag, sizeof owner->etag, probe.etag);
+            copy_text(owner->modified, sizeof owner->modified, probe.modified);
+        }
         return 0;
     }
     if (*result == CURLE_OK && probe.accepted && probe.written == 1) {
@@ -1053,10 +1061,12 @@ static void run_job(Job *j) {
         pthread_mutex_unlock(&orbit.mutex);
     }
     bool viking = guarded(&t);
+    int first_ranges = -1;
     if (viking) {
         /* Storage signatures can be GET-specific. Verify one byte instead of
          * issuing HEAD, and request the /d/ route afresh for each transfer. */
-        if (range_support(&t, NULL, &rc) != 1) {
+        first_ranges = range_support(&t, NULL, &rc);
+        if (first_ranges != 1 && !(first_ranges == 0 && r->local)) {
             if (!t.error[0])
                 copy_text(t.error, sizeof t.error, "Source did not return a valid byte range.");
             goto finish;
@@ -1128,7 +1138,7 @@ static void run_job(Job *j) {
         bool parallel = false;
         if (!single_connection && j->etag[0] && t.offset < range_boundary(r->size, count, 1) &&
             r->size - t.offset >= PARALLEL_MIN_REMAINING) {
-            int supported = viking ? 1 : range_support(&t, conditions, &rc);
+            int supported = viking ? (r->local ? first_ranges : 1) : range_support(&t, conditions, &rc);
             if (supported < 0) goto finish;
             parallel = supported == 1;
         }
@@ -1154,7 +1164,7 @@ static void run_job(Job *j) {
     /* A one-cursor USB job may have used either range windows or a host that
      * ignores ranges. Recheck on resume; do not require a new queue schema. */
     if (!single_connection && usb && !usb_parallel && j->etag[0] && t.offset < r->size) {
-        int supported = viking ? 1 : range_support(&t, conditions, &rc);
+        int supported = viking ? (r->local ? first_ranges : 1) : range_support(&t, conditions, &rc);
         if (supported < 0) goto finish;
         usb_parallel = supported == 1;
     }

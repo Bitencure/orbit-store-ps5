@@ -528,3 +528,9 @@ end:
     if (result == 0 && *retry_at < time(NULL) + 5) *retry_at = time(NULL) + 5;
     return result;
 }
+
+bool debrid_release_supported(const Release *release, char *why, size_t cap) {
+    (void)release;
+    copy_text(why, cap, "TorBox delivery for added links is not available in this build yet.");
+    return false;
+}

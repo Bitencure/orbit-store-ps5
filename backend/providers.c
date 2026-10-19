@@ -1,4 +1,6 @@
 #include "orbit.h"
+#include "hosts.h"
+#include "provider_network.h"
 #include <ctype.h>
 #include <string.h>
 #include <strings.h>
@@ -6,7 +8,33 @@ bool provider_browser_source(const char *source) {
     return source && (!strcmp(source, "vikingfile") || !strcmp(source, "akirabox") ||
                       !strcmp(source, "datanodes") || !strcmp(source, "1fichier"));
 }
+/* Direct hosts the user can paste links for: the file is fetched without the PS5 browser. */
+bool provider_direct_source(const char *source) {
+    const HostAdapter *h = host_by_id(source);
+    return h && (h->kind == HOST_WEB || h->kind == HOST_DIRECT);
+}
+bool provider_guarded(const Release *r) {
+    return provider_browser_source(r->source) || (r->local && provider_direct_source(r->source));
+}
+/* A user-added file has no catalogue title ID; its identity is the sanitised name plus the
+ * size and validators the resolver measured. Archives are inspected after download. */
+static bool local_file(const Release *r) {
+    char clean[sizeof r->filename];
+    if (!r->local || r->size < 1 || !filename_sanitize(r->filename, clean, sizeof clean) ||
+        strcmp(clean, r->filename))
+        return false;
+    if (r->compression[0]) {
+        const char *suffix = !strcmp(r->compression, "zip") ? ".zip" : !strcmp(r->compression, "7z") ? ".7z" :
+                             !strcmp(r->compression, "rar") ? ".rar" : NULL;
+        size_t n = strlen(r->filename);
+        if (!suffix || !r->archive_unverified || strcmp(r->format, "Unknown") || r->extracted_size ||
+            n <= strlen(suffix) || strcasecmp(r->filename + n - strlen(suffix), suffix))
+            return false;
+    } else if (r->archive_unverified || r->extracted_size) return false;
+    return true;
+}
 static bool browser_file(const Release *r) {
+    if (r->local) return provider_browser_source(r->source) && local_file(r);
     if (!provider_browser_source(r->source) || strlen(r->title_id) != 9 ||
         (strncmp(r->title_id, "PPSA", 4) && strncmp(r->title_id, "CUSA", 4)) || !r->filename[0] ||
         strchr(r->filename, '/') || strchr(r->filename, '\\') || strstr(r->filename, ".."))
@@ -164,6 +192,11 @@ bool provider_url_supported(const Release *release) {
     if (!strcmp(release->id, "orbit-network-check"))
         return !strcmp(release->url,
                        "https://raw.githubusercontent.com/DaveGamble/cJSON/v1.7.19/LICENSE");
+    if (release->local && !strcmp(release->source, "archive")) return false;
+    if (release->local && provider_direct_source(release->source)) {
+        const HostAdapter *h = host_for_url(release->url);
+        return local_file(release) && h && !strcmp(h->id, release->source);
+    }
     if (!strcmp(release->source, "archive"))
         return !strncmp(release->url, "https://archive.org/download/", 29) &&
                strlen(release->url) > 29 &&
@@ -202,7 +235,8 @@ bool provider_supported(const Release *release) {
 #ifdef ORBIT_TEST
     /* Test binaries may parse the catalogue, but may only transfer fixtures. */
     return !strncmp(release->url, "http://127.0.0.1:", 17) &&
-           (!strcmp(release->source, "archive") || provider_browser_source(release->source));
+           (!strcmp(release->source, "archive") || provider_browser_source(release->source) ||
+            (release->local && provider_direct_source(release->source) && local_file(release)));
 #else
     return provider_url_supported(release);
 #endif
@@ -222,4 +256,15 @@ bool provider_capture_url(const Release *release, const char *candidate) {
     Release resolved = *release;
     strcpy(resolved.url, candidate);
     return provider_browser_source(release->source) && provider_supported(&resolved);
+}
+
+/* Fixed hosts for catalogue/browser providers; adapter domains for user-added direct links.
+ * Every hop of a redirect chain is checked here, and sockets still refuse private addresses. */
+bool provider_transfer_allowed(const Release *release, const char *url) {
+    if (!release || !release->local || !provider_direct_source(release->source))
+        return provider_transfer_url_allowed(url);
+    char name[256];
+    const HostAdapter *h = host_by_id(release->source);
+    if (!h || !host_url_ok(url, name, sizeof name)) return false;
+    return h->kind == HOST_WEB || host_domain_match(h, name);
 }

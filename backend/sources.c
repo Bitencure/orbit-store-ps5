@@ -11,7 +11,16 @@ unsigned source_flag(const char *id) {
     if (!strcmp(id, "akirabox")) return ORBIT_SOURCE_AKIRABOX;
     if (!strcmp(id, "datanodes")) return ORBIT_SOURCE_DATANODES;
     if (!strcmp(id, "1fichier")) return ORBIT_SOURCE_ONEFICHIER;
+    if (!strcmp(id, "web")) return ORBIT_SOURCE_WEB;
+    if (!strcmp(id, "gofile")) return ORBIT_SOURCE_GOFILE;
+    if (!strcmp(id, "fileditch")) return ORBIT_SOURCE_FILEDITCH;
     return 0;
+}
+
+bool source_id_enabled_locked(const char *source) {
+    unsigned flag = source_flag(source);
+    return flag && orbit.sources.notice_version == ORBIT_SOURCE_NOTICE_VERSION &&
+           orbit.sources.acknowledged_at > 0 && (orbit.sources.enabled & flag);
 }
 
 bool source_enabled_locked(const Release *r) {
@@ -29,7 +38,8 @@ cJSON *sources_json_locked(void) {
         const char *id, *label;
         bool ready;
     } providers[] = {{"vikingfile", "Vikingfile", true}, {"archive", "Archive.org", true},
-                     {"akirabox", "AkiraBox", true}, {"datanodes", "DataNodes", true}};
+                     {"akirabox", "AkiraBox", true}, {"datanodes", "DataNodes", true},
+                     {"web", "Direct links", true}, {"fileditch", "FileDitch", true}};
     cJSON *o = cJSON_CreateObject(), *enabled = cJSON_AddArrayToObject(o, "enabled"),
           *options = cJSON_AddArrayToObject(o, "options");
     bool acknowledged = orbit.sources.notice_version == ORBIT_SOURCE_NOTICE_VERSION &&
@@ -55,7 +65,7 @@ cJSON *sources_json_locked(void) {
 
 int sources_set_locked(const cJSON *input, char *err, size_t cap) {
     const cJSON *enabled = cJSON_GetObjectItemCaseSensitive(input, "enabled"), *x;
-    if (!cJSON_IsArray(enabled) || cJSON_GetArraySize(enabled) > 5) {
+    if (!cJSON_IsArray(enabled) || cJSON_GetArraySize(enabled) > ORBIT_MAX_SOURCES) {
         copy_text(err, cap, "Select the sources you want to enable.");
         return 400;
     }

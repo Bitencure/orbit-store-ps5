@@ -1,0 +1,22 @@
+#ifndef ORBIT_RESOLVE_H
+#define ORBIT_RESOLVE_H
+#include "hosts.h"
+#include "orbit.h"
+
+/* What one guarded probe learned about a link. Nothing here is a download URL the
+ * queue trusts: transfers re-validate size, validators and every redirect hop. */
+typedef struct {
+    const HostAdapter *host;
+    char url[2048];      /* The link as pasted (1fichier aliases canonicalised). */
+    char filename[160];  /* Sanitised; from the user, Content-Disposition, then the URL. */
+    char etag[256], modified[128];
+    int64_t size;
+    bool ranges;         /* The host honoured a byte range, so resume and splitting can work. */
+} Resolved;
+
+/* Blocking; call without orbit.mutex. Return 0, or -1 with a user-facing message. */
+int resolve_direct(const HostAdapter *host, const char *url, const char *wanted_name,
+                   atomic_bool *cancel, Resolved *out, char *error, size_t cap);
+/* Vikingfile /f/<id> page: name and size from its public file listing. */
+int resolve_viking(const char *page_url, atomic_bool *cancel, Resolved *out, char *error, size_t cap);
+#endif

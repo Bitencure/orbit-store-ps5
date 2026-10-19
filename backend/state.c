@@ -49,7 +49,7 @@ Release *release_find(const char *id) {
     for (size_t i = 0; i < orbit.release_count; i++)
         if (!strcmp(orbit.releases[i].id, id))
             return &orbit.releases[i];
-    return NULL;
+    return custom_release_find(id);
 }
 Job *job_find(const char *id) {
     for (size_t i = 0; i < orbit.job_count; i++)
@@ -160,6 +160,9 @@ int state_save_locked(void) {
     /* Older builds would treat a compressed download as a finished plain file. */
     for (size_t i = 0; i < orbit.job_count; i++)
         if (orbit.jobs[i].id[0] && orbit.jobs[i].release.compression[0]) schema = 6;
+    /* Official builds reject user-added releases as invalid; refuse the queue cleanly instead. */
+    for (size_t i = 0; i < orbit.job_count; i++)
+        if (orbit.jobs[i].id[0] && orbit.jobs[i].release.local) schema = 7;
     cJSON_AddNumberToObject(o, "schema", schema);
     cJSON_AddStringToObject(o, "preferredStorage", orbit.preferred_storage);
     cJSON_AddBoolToObject(o, "deleteArchives", orbit.delete_archives);
@@ -249,7 +252,8 @@ int state_load(void) {
     const cJSON *schema_value = cJSON_GetObjectItemCaseSensitive(o, "schema");
     if (!cJSON_IsNumber(schema_value) ||
         (schema_value->valuedouble != 1 && schema_value->valuedouble != 2 && schema_value->valuedouble != 3 &&
-         schema_value->valuedouble != 4 && schema_value->valuedouble != 5 && schema_value->valuedouble != 6)) {
+         schema_value->valuedouble != 4 && schema_value->valuedouble != 5 && schema_value->valuedouble != 6 &&
+         schema_value->valuedouble != 7)) {
         free(s);
         cJSON_Delete(o);
         return -1;
@@ -306,7 +310,7 @@ int state_load(void) {
         const cJSON *saved = cJSON_GetObjectItemCaseSensitive(x, "release");
         if (saved) {
             /* A bad saved identity must never silently switch to the current file. */
-            if (release_parse(saved, &snapshot, true) ||
+            if (release_parse_ex(saved, &snapshot, true, true) ||
                 strcmp(snapshot.id, json_text(x, "releaseId"))) {
                 cJSON_Delete(o);
                 return -1;
@@ -362,7 +366,7 @@ int state_load(void) {
             const cJSON *web = cJSON_GetObjectItemCaseSensitive(x, "debridId"),
                         *file = cJSON_GetObjectItemCaseSensitive(x, "debridFile");
             const char *account = json_text(x, "debridAccount");
-            if ((schema != 3 && schema != 5 && schema != 6) || strlen(account) != 64 || strspn(account, "0123456789abcdef") != 64 ||
+            if ((schema != 3 && schema != 5 && schema != 6 && schema != 7) || strlen(account) != 64 || strspn(account, "0123456789abcdef") != 64 ||
                 !cJSON_IsBool(cJSON_GetObjectItemCaseSensitive(x, "debridSubmitted")) ||
                 !cJSON_IsNumber(web) || !cJSON_IsNumber(file) ||
                 !(web->valuedouble >= -1 && web->valuedouble <= 9007199254740991.0) ||
