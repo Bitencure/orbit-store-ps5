@@ -94,10 +94,13 @@ bool host_url_ok(const char *url, char *name, size_t cap) {
     curl_url_get(u, CURLUPART_PASSWORD, &password, 0);
     curl_url_get(u, CURLUPART_FRAGMENT, &fragment, 0);
     ok = ok && !user && !password && !fragment;
+    bool public_https = ok && !strcmp(scheme, "https") && (!port || !strcmp(port, "443")) && host_name_ok(host);
 #ifdef ORBIT_TEST
-    ok = ok && !strcmp(scheme, "http") && !strcmp(host, "127.0.0.1");
+    /* The test build also takes loopback http so mock origins work. Production syntax is
+     * unchanged, and its sockets still refuse every non-loopback address. */
+    ok = public_https || (ok && !strcmp(scheme, "http") && !strcmp(host, "127.0.0.1"));
 #else
-    ok = ok && !strcmp(scheme, "https") && (!port || !strcmp(port, "443")) && host_name_ok(host);
+    ok = public_https;
 #endif
     if (ok && name) {
         if (strlen(host) >= cap) ok = false;

@@ -186,12 +186,18 @@ int resolve_direct(const HostAdapter *host, const char *url, const char *wanted_
         return -1;
     }
     if (out->size > MAX_FILE_SIZE) { copy_text(error, cap, "The file size is not valid."); return -1; }
-    char raw[512] = {0};
-    if (wanted_name && *wanted_name) copy_text(raw, sizeof raw, wanted_name);
-    else if (!disposition_filename(p.disposition, raw, sizeof raw) &&
-             !url_last_segment(final_url, raw, sizeof raw) && !url_last_segment(url, raw, sizeof raw))
-        raw[0] = 0;
-    if (!filename_sanitize(raw, out->filename, sizeof out->filename)) {
+    /* Take the first name that can be made safe: the user's, the host's, then the URL's own. */
+    char candidates[4][512] = {{0}};
+    if (wanted_name) copy_text(candidates[0], sizeof candidates[0], wanted_name);
+    if (!wanted_name || !*wanted_name) {
+        disposition_filename(p.disposition, candidates[1], sizeof candidates[1]);
+        url_last_segment(final_url, candidates[2], sizeof candidates[2]);
+        url_last_segment(url, candidates[3], sizeof candidates[3]);
+    }
+    bool named = false;
+    for (size_t i = 0; i < 4 && !named; i++)
+        named = candidates[i][0] && filename_sanitize(candidates[i], out->filename, sizeof out->filename);
+    if (!named) {
         copy_text(error, cap, "Orbit could not work out a safe file name. Enter one below.");
         return -1;
     }

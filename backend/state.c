@@ -68,6 +68,10 @@ static cJSON *job_json(const Job *j, bool private_fields) {
     S("error", error);
     S("verification", verification);
     cJSON_AddBoolToObject(o, "canRefreshLink", job_can_refresh_link(j));
+    /* Fork: pasted links refresh by pasting a new address (no browser step). */
+    cJSON_AddBoolToObject(o, "canRefreshUrl", job_can_refresh_url(j));
+    cJSON_AddStringToObject(o, "sourceId", j->release.source);
+    if (j->release.local) cJSON_AddStringToObject(o, "origin", "local");
     cJSON_AddStringToObject(o, "delivery", j->delivery[0] ? j->delivery : "direct");
     S("deliveryPhase", delivery_phase);
     int64_t received = j->received;
