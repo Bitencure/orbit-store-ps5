@@ -5,8 +5,12 @@
 Runs the ORBIT_TEST service (loopback http only) against local mock origins. No real host
 is contacted and no game data is used: every file is a deterministic 1 MiB buffer.
 Run: python3 tests/custom_integration.py (after tools/fork/host-build.sh). This proves the software; it is not PS5 hardware testing."""
+import builtins
+import contextlib
 import hashlib
 import http.server
+import importlib.util
+import io
 import json
 import os
 import pathlib
@@ -32,6 +36,30 @@ MODIFIED = 'Wed, 01 Jan 2025 00:00:00 GMT'
 CUT_AT = 300_000
 
 
+# A 48 MiB file generated from its offset (nothing is stored), large enough for Orbit to split it into parallel ranges.
+# Byte i is (7 * (i % 65536) + i // 65536) % 256, so a chunk that lands at the wrong offset can never match by accident.
+BIG_SIZE = 48 * 1024 * 1024
+_BIG_BASE = bytes((7 * j) % 256 for j in range(65536))
+_BIG_SHIFT = [bytes((x + k) % 256 for x in range(256)) for k in range(256)]
+
+
+def big_slice(start, end):
+    out, pos = bytearray(), start
+    while pos < end:
+        offset = pos & 0xFFFF
+        take = min(end - pos, 65536 - offset)
+        out += _BIG_BASE[offset:offset + take].translate(_BIG_SHIFT[(pos >> 16) % 256])
+        pos += take
+    return bytes(out)
+
+
+def big_sha256():
+    digest = hashlib.sha256()
+    for start in range(0, BIG_SIZE, 1 << 20):
+        digest.update(big_slice(start, min(start + (1 << 20), BIG_SIZE)))
+    return digest.hexdigest()
+
+
 class Handler(http.server.BaseHTTPRequestHandler):
     protocol_version = 'HTTP/1.1'
 
@@ -54,6 +82,48 @@ class Handler(http.server.BaseHTTPRequestHandler):
             body = json.dumps({'exist': not gone, 'hash': form.split('=')[-1], 'name': 'viking-sample.bin', 'size': len(DATA)}).encode()
             return self.reply(200, {'Content-Type': 'application/json'}, body)
         self.reply(404, {'Content-Type': 'text/plain'}, b'unknown')
+
+    def serve_big(self, send_body, rng):
+        """/big.bin, with a hold the test controls: once `hold_after` bytes have been served in total, every connection
+        stalls until the test releases it, so "part-way through" is an exact, repeatable state."""
+        server = self.server
+        start, end, status = 0, BIG_SIZE - 1, 200
+        match = re.fullmatch(r'bytes=(\d*)-(\d*)', rng or '')
+        if match:
+            first, last = match.groups()
+            start = int(first) if first else 0
+            end = min(int(last), BIG_SIZE - 1) if last else BIG_SIZE - 1
+            status = 206
+        headers = {'Content-Type': 'application/octet-stream', 'ETag': '"big-v1"', 'Last-Modified': MODIFIED,
+                   'Accept-Ranges': 'bytes', 'Content-Length': str(end - start + 1)}
+        if status == 206:
+            headers['Content-Range'] = f'bytes {start}-{end}/{BIG_SIZE}'
+        self.send_response(status)
+        for key, value in headers.items():
+            self.send_header(key, value)
+        self.end_headers()
+        if not send_body:
+            return
+        pos = start
+        try:
+            while pos <= end:
+                deadline = time.time() + 120
+                while time.time() < deadline:
+                    with server.lock:
+                        held = server.big_hold_after is not None and server.big_served >= server.big_hold_after
+                    if not held:
+                        break
+                    time.sleep(0.02)
+                take = min(65536, end - pos + 1)
+                self.wfile.write(big_slice(pos, pos + take))
+                with server.lock:
+                    server.big_served += take
+                    delay = server.big_delay
+                if delay:
+                    time.sleep(delay)
+                pos += take
+        except OSError:
+            pass  # the client went away (paused, cancelled or killed)
 
     def serve_data(self, data, send_body, rng, if_match, extra):
         headers = {'Content-Type': 'application/octet-stream', 'ETag': ETAG, 'Last-Modified': MODIFIED, 'Accept-Ranges': 'bytes', **extra}
@@ -86,6 +156,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         with server.lock:
             server.log.append((self.command, path, rng, if_match))
         octet = {'Content-Type': 'application/octet-stream'}
+        if path == '/big.bin':
+            return self.serve_big(send_body, rng)
         simple = {
             '/html': (200, {'Content-Type': 'text/html; charset=utf-8'}, b'<html>Sorry, file not found</html>'),
             '/json': (200, {'Content-Type': 'application/json'}, b'{"error":"expired"}'),
@@ -214,6 +286,7 @@ class Origin(socketserver.ThreadingMixIn, http.server.HTTPServer):
         super().__init__(('127.0.0.1', 0), Handler)
         self.log, self.cut_once, self.expired = [], {}, set()
         self.lock = threading.Lock()
+        self.big_served, self.big_hold_after, self.big_delay = 0, None, 0.0
         threading.Thread(target=self.serve_forever, daemon=True).start()
 
     @property
@@ -241,9 +314,12 @@ class Service:
         self.origin, self.port, self.token, self.process = origin, free_port(), None, None
 
     def start(self, extra_env=None):
+        # A restart keeps the environment the service was first started with (a test of recovery must not change the layout).
+        if extra_env is not None:
+            self.extra_env = dict(extra_env)
         env = dict(os.environ, ORBIT_TEST_URL=self.origin.base + '/fixture.bin', ORBIT_TEST_SIZE='1024',
                    ORBIT_TEST_FILEDITCH_API='http://127.0.0.1:1/api')
-        env.update(extra_env or {})
+        env.update(getattr(self, 'extra_env', {}))
         self.process = subprocess.Popen(
             [str(self.binary), '--state', str(self.state), '--storage', str(self.storage), '--port', str(self.port)],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
@@ -1171,6 +1247,262 @@ class LearnedCaptureHostileName(LearnedCapture):
         self.assertFalse((self.service.storage.parent / 'evil-name.bin').exists())
 
 
+class Recovery(Base):
+    """Progress, cancellation and recovery against a file big enough to be split into parallel ranges, held at an exact
+    point so "part-way through" is the same state on every run. See docs/PROGRESS.md for what the counters mean."""
+    sources = ('web',)
+    HOLD = 20 * 1024 * 1024
+    env = {}
+    AHEAD = (8 * 1024 * 1024, BIG_SIZE)  # eight ranges: the last one starts at 7/8 of the file, far ahead of the sum
+    STOP_SLACK = 4 * 1024 * 1024  # a clean stop may drop what is still in the socket
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.origin = Origin()
+        cls.service = Service(cls.tmp.name, cls.origin)
+        cls.service.start(cls.env)
+        cls.service.enable(*cls.sources)
+
+    def setUp(self):
+        self.origin.big_served, self.origin.big_hold_after, self.origin.big_delay = 0, None, 0.0
+        self.names = []
+
+    def tearDown(self):
+        self.origin.big_hold_after = None
+        for job in self.service.jobs():
+            if job['status'] in ('downloading', 'queued', 'retrying', 'paused'):
+                self.service.act(job['id'], 'cancel', deletePartial=True)
+        self.wait_idle()
+        for job in self.service.jobs():
+            self.service.act(job['id'], 'delete' if job['status'] == 'cancelled' else 'remove')
+        for part in (self.service.storage / 'homebrew').glob('*'):
+            part.unlink()
+
+    def wait_idle(self, timeout=30):
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if not any(j['status'] in ('downloading', 'verifying', 'retrying') for j in self.service.jobs()):
+                return
+            time.sleep(0.2)
+
+    def folder(self):
+        return self.service.storage / 'homebrew'
+
+    def begin(self, name, hold=True):
+        self.names.append(name)
+        if hold:
+            self.origin.big_hold_after = self.HOLD
+        reply = self.service.resolve(self.origin.base + '/big.bin', name)
+        self.assertEqual(reply['state'], 'ready', reply)
+        status, body = self.service.queue(reply['releaseId'])
+        self.assertEqual(status, 201, body)
+        return body['id']
+
+    def wait_held(self, timeout=40):
+        deadline = time.time() + timeout
+        last = -1
+        while time.time() < deadline:
+            served = self.origin.big_served
+            if served >= self.HOLD and served == last:
+                return served
+            last = served
+            time.sleep(0.5)
+        self.fail(f'the origin never reached its hold point ({self.origin.big_served} bytes served)')
+
+    def part(self, name):
+        return self.folder() / (name + '.part')
+
+    def ranges(self, job_id):
+        """The durable cursors Orbit keeps for a job (state.json is what a restart would read)."""
+        state = json.loads((self.service.state / 'state.json').read_text())
+        for entry in state['jobs']:
+            if entry.get('id') == job_id:
+                return entry.get('rangeReceived')
+        return None
+
+    def assert_durable_bytes_are_real(self, name, job_id, received):
+        """Everything Orbit counts as received must be in the file, at the right place, with the right content."""
+        cursors = self.ranges(job_id)
+        self.assertIsNotNone(cursors, 'the job must have durable range cursors')
+        self.assertEqual(sum(cursors), received, 'the counter is the sum of the durable cursors')
+        count = len(cursors)
+        data = self.part(name).read_bytes()
+        for index, done in enumerate(cursors):
+            base = (BIG_SIZE // count) * index + ((BIG_SIZE % count) * index) // count
+            self.assertEqual(data[base:base + done], big_slice(base, base + done), f'range {index} holds wrong bytes')
+
+    def finish(self, job_id, name):
+        self.origin.big_hold_after = None
+        job = self.service.wait_job(job_id, {'complete', 'error'}, 120)
+        self.assertEqual(job['status'], 'complete', job)
+        self.assertEqual(sha256_file(job['path']), big_sha256())
+        self.assertFalse(self.part(name).exists())
+        return job
+
+    # ---- progress ----
+    def test_progress_never_counts_a_byte_that_is_not_on_disk_and_resume_keeps_it(self):
+        name = 'big-progress.bin'
+        job_id = self.begin(name)
+        samples = []
+        deadline = time.time() + 40
+        while time.time() < deadline and self.origin.big_served < self.HOLD:
+            samples.append(self.service.job(job_id)['received'])
+            time.sleep(0.1)
+        self.wait_held()
+        self.assertEqual(samples, sorted(samples), 'received must never go backwards while running')
+        self.assertEqual(self.service.act(job_id, 'pause')[0], 200)
+        job = self.service.wait_job(job_id, {'paused'}, 30)
+        received, size = job['received'], self.part(name).stat().st_size
+        self.assertGreater(received, 0)
+        self.assertLessEqual(received, size, 'the file is never shorter than what is counted')
+        self.assertLess(size, BIG_SIZE)
+        self.assert_durable_bytes_are_real(name, job_id, received)
+        served_before = self.origin.big_served
+        self.assertEqual(self.service.act(job_id, 'resume')[0], 200)
+        self.finish(job_id, name)
+        refetched = self.origin.big_served - served_before
+        self.assertLessEqual(refetched, BIG_SIZE - received + 4 * 1024 * 1024,
+                             f'resume must continue from the counted bytes ({refetched} fetched, {BIG_SIZE - received} missing)')
+        self.assertGreaterEqual(refetched, BIG_SIZE - received)
+
+    def test_the_part_file_can_be_longer_than_the_counter(self):
+        """Not a bug: ranges are written into a file that grows to the furthest byte written. This pins the behaviour
+        down so a change to it is noticed, and so the documentation stays honest."""
+        name = 'big-longer.bin'
+        job_id = self.begin(name)
+        self.wait_held()
+        self.service.act(job_id, 'pause')
+        job = self.service.wait_job(job_id, {'paused'}, 30)
+        ahead = self.part(name).stat().st_size - job['received']
+        self.assertGreater(ahead, self.AHEAD[0], f'in this layout the file should run ahead of the counter (ahead={ahead}, received={job["received"]})')
+        self.assertLess(ahead, self.AHEAD[1], f'and by no more than the layout allows (ahead={ahead}, received={job["received"]})')
+        self.finish_after_resume(job_id, name)
+
+    def finish_after_resume(self, job_id, name):
+        self.service.act(job_id, 'resume')
+        self.finish(job_id, name)
+
+    # ---- cancellation ----
+    def test_cancel_and_delete_the_partial_leaves_nothing_and_the_name_is_reusable(self):
+        name = 'big-cancel-delete.bin'
+        job_id = self.begin(name)
+        self.wait_held()
+        self.assertTrue(self.part(name).exists())
+        self.assertEqual(self.service.act(job_id, 'cancel', deletePartial=True)[0], 200)
+        self.origin.big_hold_after = None
+        job = self.service.wait_job(job_id, {'cancelled'}, 30)
+        self.assertEqual(job['received'], 0)
+        deadline = time.time() + 15
+        while time.time() < deadline and self.part(name).exists():
+            time.sleep(0.2)
+        self.assertFalse(self.part(name).exists(), 'Delete partial file must remove the .part file')
+        self.assertEqual([p.name for p in self.folder().iterdir()], [], 'nothing else may be left in the folder')
+        self.service.act(job_id, 'forget')
+        again = self.begin(name, hold=False)
+        self.finish(again, name)
+
+    def test_cancel_and_keep_the_partial_then_delete_it_later(self):
+        name = 'big-cancel-keep.bin'
+        job_id = self.begin(name)
+        self.wait_held()
+        self.assertEqual(self.service.act(job_id, 'cancel', deletePartial=False)[0], 200)
+        self.origin.big_hold_after = None
+        job = self.service.wait_job(job_id, {'cancelled'}, 30)
+        time.sleep(1)  # nothing may touch the file after the job has stopped
+        self.assertTrue(self.part(name).exists(), 'Keep partial file must keep the .part file')
+        size = self.part(name).stat().st_size
+        self.assertGreater(job['received'], 0)
+        time.sleep(1)
+        self.assertEqual(self.part(name).stat().st_size, size, 'a cancelled job must not keep writing')
+        self.assertEqual(self.service.act(job_id, 'remove')[0], 409, 'history must not drop a job that still owns a partial file')
+        self.assertEqual(self.service.act(job_id, 'delete')[0], 200)
+        self.assertFalse(self.part(name).exists())
+        self.assertIsNone(self.service.job(job_id))
+
+    def test_a_kept_partial_can_be_resumed_after_cancelling(self):
+        name = 'big-cancel-resume.bin'
+        job_id = self.begin(name)
+        self.wait_held()
+        self.service.act(job_id, 'cancel', deletePartial=False)
+        self.origin.big_hold_after = None
+        job = self.service.wait_job(job_id, {'cancelled'}, 30)
+        received = job['received']
+        served_before = self.origin.big_served
+        self.assertEqual(self.service.act(job_id, 'resume')[0], 200)
+        self.finish(job_id, name)
+        self.assertLessEqual(self.origin.big_served - served_before, BIG_SIZE - received + 4 * 1024 * 1024)
+
+    def test_cancelling_a_paused_job_can_delete_its_partial(self):
+        name = 'big-pause-cancel.bin'
+        job_id = self.begin(name)
+        self.wait_held()
+        self.service.act(job_id, 'pause')
+        self.service.wait_job(job_id, {'paused'}, 30)
+        self.assertTrue(self.part(name).exists())
+        self.assertEqual(self.service.act(job_id, 'cancel', deletePartial=True)[0], 200)
+        self.service.wait_job(job_id, {'cancelled'}, 30)
+        self.assertFalse(self.part(name).exists())
+
+    # ---- recovery ----
+    def recover(self, name, how):
+        job_id = self.begin(name)
+        served = self.wait_held()
+        time.sleep(3.5)  # progress is checkpointed about every two seconds; a crash loses at most that much
+        before = self.part(name).stat().st_size
+        if how == 'kill':
+            self.service.process.kill()
+            self.service.process.wait(15)
+        else:
+            self.service.stop()
+        self.origin.big_hold_after = None
+        self.service.start()
+        job = self.service.job(job_id)
+        self.assertIsNotNone(job, 'an interrupted download must still be listed after a restart')
+        self.assertIn(job['status'], ('paused', 'queued', 'retrying', 'downloading'), job)
+        self.assertLessEqual(job['received'], self.part(name).stat().st_size)
+        self.assertGreater(job['received'], 0, f'the restart should resume from saved progress, not from zero ({how})')
+        if how == 'stop':
+            # A clean stop flushes and checkpoints what was written: nothing near the hold point may be forgotten.
+            self.assertGreaterEqual(job['received'], served - self.STOP_SLACK,
+                                    f"a clean stop must save its progress ({job['received']} saved, {served} served)")
+        if job['status'] == 'paused':
+            self.assert_durable_bytes_are_real(name, job_id, job['received'])
+            self.assertEqual(self.service.act(job_id, 'resume')[0], 200)
+        return job_id, before
+
+    def test_recovery_after_the_service_is_killed(self):
+        name = 'big-killed.bin'
+        job_id, _ = self.recover(name, 'kill')
+        self.finish(job_id, name)
+
+    def test_recovery_after_a_clean_stop(self):
+        name = 'big-stopped.bin'
+        job_id, _ = self.recover(name, 'stop')
+        self.finish(job_id, name)
+
+    def test_a_partial_file_that_does_not_match_the_saved_cursors_is_refused_not_trusted(self):
+        name = 'big-truncated.bin'
+        job_id = self.begin(name)
+        self.wait_held()
+        self.service.act(job_id, 'pause')
+        self.service.wait_job(job_id, {'paused'}, 30)
+        os.truncate(self.part(name), 1024)  # someone shortened the file behind Orbit's back
+        self.origin.big_hold_after = None
+        self.assertEqual(self.service.act(job_id, 'resume')[0], 200)
+        job = self.service.wait_job(job_id, {'error', 'complete'}, 60)
+        self.assertEqual(job['status'], 'error', job)
+        self.assertIn('Partial file size is invalid', job['error'])
+        self.assertEqual(self.service.act(job_id, 'cancel', deletePartial=True)[0], 200)
+
+
+class RecoveryUsbWindows(Recovery):
+    """The same on the USB path, which keeps one cursor and writes a bounded window ahead of it."""
+    env = {'ORBIT_TEST_USB_STORAGE': '1'}
+    AHEAD = (-1, 8 * 1024 * 1024)  # one cursor: the file runs at most a little ahead of it
+    STOP_SLACK = 12 * 1024 * 1024  # a window (8 MiB) is committed whole, so an unfinished one is not counted
+
+
 class ManualLink(Base):
     """The fallback for when the PS5 browser cannot be used: the person finishes the provider's steps on their own computer
     and pastes the link from the Download button. It must be held to every check a link read from the browser gets."""
@@ -1366,6 +1698,59 @@ class Sandbox(unittest.TestCase):
     def test_normal_build_keeps_the_original_port_and_is_not_a_sandbox(self):
         port, system = self.run_without_port(BIN)
         self.assertEqual((port, system.get('sandbox'), system['httpPort']), (34177, None, 34177))
+
+
+@unittest.skipUnless(SANDBOX_BIN.exists(), 'build/orbit-sandbox-test is not built')
+class HardwareTool(unittest.TestCase):
+    """tools/fork/hardware-check.py, the script used on a real console, run against the sandbox build with local file checks."""
+
+    @classmethod
+    def setUpClass(cls):
+        spec = importlib.util.spec_from_file_location('hardware_check', ROOT / 'tools' / 'fork' / 'hardware-check.py')
+        cls.tool = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.tool)
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.origin = Origin()
+        cls.service = Service(cls.tmp.name, cls.origin, SANDBOX_BIN)
+        cls.service.start()
+        cls.service.enable('web')
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.service.stop()
+        cls.origin.shutdown()
+        cls.tmp.cleanup()
+
+    def run_tool(self, *scenarios, delay=0.03):
+        self.origin.big_served, self.origin.big_hold_after, self.origin.big_delay = 0, None, delay
+        argv = [*scenarios, '--ps5', '127.0.0.1', '--port', str(self.service.port), '--token', self.service.token,
+                '--drive', self.service.storage_id(), '--url', self.origin.base + '/big.bin', '--sha256', big_sha256(),
+                '--at', str(12 << 20), '--local-folder', str(self.service.storage / 'homebrew')]
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = self.tool.main(argv)
+        self.assertNotIn(self.service.token, out.getvalue(), 'the pairing token must never be printed')
+        return code, out.getvalue()
+
+    def test_progress_scenario_passes(self):
+        code, out = self.run_tool('progress')
+        self.assertEqual(code, 0, out)
+        self.assertIn('file is byte-identical', out)
+
+    def test_cancel_scenarios_pass(self):
+        code, out = self.run_tool('cancel-delete', 'cancel-keep')
+        self.assertEqual(code, 0, out)
+        self.assertEqual(list((self.service.storage / 'homebrew').glob('orbit-fork-hw-*')), [])
+
+    def test_restart_scenario_passes(self):
+        original = builtins.input
+        builtins.input = lambda *_: self.service.start()  # "send the ELF again"
+        try:
+            code, out = self.run_tool('restart', delay=0.15)  # slow enough that the stop lands mid-download
+        finally:
+            builtins.input = original
+        self.assertEqual(code, 0, out)
+        self.assertIn('it kept its progress', out)
 
 
 if __name__ == '__main__':
