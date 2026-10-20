@@ -44,7 +44,8 @@ uses), **Payload managers** and **Start automatically** (they refuse to run here
 ```sh
 cd TOOLS
 sha256sum -c SHA256SUMS --ignore-missing        # orbit_store_sandbox.elf: OK
-sha256sum orbit_store_sandbox.elf               # compare by eye with the value in FORK.md and in my message
+sha256sum orbit_store_sandbox.elf
+# expected: 9ce87a6d72e466394296a6cdb0d2602669fdd794566cca25378a7e676165981c  (also in FORK.md on the dev branch)
 ```
 
 To go further than trusting the file, rebuild the pushed commit from scratch and compare:
