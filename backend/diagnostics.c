@@ -99,7 +99,7 @@ static Event job_event(const Job *j) {
     if (!j) return e;
     for (size_t i = 0; i < orbit.job_count; i++)
         if (j == &orbit.jobs[i]) e.download = (unsigned)i + 1;
-    e.provider = ALLOWED(j->release.source, "archive", "vikingfile", "akirabox", "datanodes", "1fichier", "web", "gofile", "fuckingfast");
+    e.provider = ALLOWED(j->release.source, "archive", "vikingfile", "akirabox", "datanodes", "1fichier", "web", "gofile", "fuckingfast", "rootz");
     e.status = ALLOWED(j->status, "queued", "downloading", "verifying", "inspecting", "extracting", "retrying", "paused", "cancelled", "complete", "error");
     e.reason = reason(j->error);
     e.attempts = j->attempts;

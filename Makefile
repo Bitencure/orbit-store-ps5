@@ -147,6 +147,10 @@ test-hosts: build/orbit-hosts-test
 	./build/orbit-hosts-test
 test-custom: build/orbit-test
 	python3 tests/custom_integration.py
+# The ORBIT_TEST service built with AddressSanitizer and UBSan; run the integration tests against it with
+# ORBIT_TEST_BIN=build/orbit-test-asan python3 tests/custom_integration.py
+build/orbit-test-asan: $(SOURCES) $(HEADERS) $(GENERATED) $(HOST_ARCHIVE_DEPS)
+	$(HOST_CC) $(CPPFLAGS) $(CFLAGS) -fsanitize=address,undefined -fno-omit-frame-pointer -DORBIT_DESKTOP -DORBIT_TEST $(SOURCES) -o $@ -lcurl -lmicrohttpd -lssl -lcrypto $(HOST_ARCHIVE_LIBS) -lpthread -lm
 # Local verification binary: production allowlists and socket guard, with the desktop download
 # restriction lifted so the real transfer code can be checked against real hosts. Never shipped.
 .PHONY: live-verify

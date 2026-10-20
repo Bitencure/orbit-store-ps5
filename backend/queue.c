@@ -359,7 +359,8 @@ bool job_can_refresh_link(const Job *j) {
     return j && (!strcmp(j->status, "paused") || !strcmp(j->status, "error")) &&
         !j->archive_ready && !(j->release.compression[0] && j->received >= j->total) &&
         strcmp(j->delivery, "torbox") &&
-        (!strcmp(j->release.source, "akirabox") || !strcmp(j->release.source, "datanodes") || !strcmp(j->release.source, "1fichier")) &&
+        (!strcmp(j->release.source, "akirabox") || !strcmp(j->release.source, "datanodes") || !strcmp(j->release.source, "1fichier") ||
+         !strcmp(j->release.source, "rootz")) &&
         provider_browser_supported(&j->release);
 }
 int job_refresh_link_locked(Job *j, const Release *r, const Storage *pin,

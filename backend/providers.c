@@ -7,7 +7,7 @@
 #include <strings.h>
 bool provider_browser_source(const char *source) {
     return source && (!strcmp(source, "vikingfile") || !strcmp(source, "akirabox") ||
-                      !strcmp(source, "datanodes") || !strcmp(source, "1fichier"));
+                      !strcmp(source, "datanodes") || !strcmp(source, "1fichier") || !strcmp(source, "rootz"));
 }
 /* Direct hosts the user can paste links for: the file is fetched without the PS5 browser. */
 bool provider_direct_source(const char *source) {
@@ -21,8 +21,8 @@ bool provider_guarded(const Release *r) {
  * size and validators the resolver measured. Archives are inspected after download. */
 static bool local_file(const Release *r) {
     char clean[sizeof r->filename];
-    if (!r->local || r->size < 1 || !filename_sanitize(r->filename, clean, sizeof clean) ||
-        strcmp(clean, r->filename))
+    if (!r->local || (r->size < 1 && !(r->size_pending && r->size == 0)) ||
+        !filename_sanitize(r->filename, clean, sizeof clean) || strcmp(clean, r->filename))
         return false;
     if (r->compression[0]) {
         const char *suffix = !strcmp(r->compression, "zip") ? ".zip" : !strcmp(r->compression, "7z") ? ".7z" :
@@ -101,6 +101,15 @@ static bool browser_page(const Release *r, const char *url) {
             if (!isalnum((unsigned char)*p)) return false;
         return true;
     }
+    if (!strcmp(r->source, "rootz")) {
+        /* Rootz share pages: rootz.so/d/<short id>, e.g. /d/ba7ua. */
+        const char *prefix = "https://rootz.so/d/";
+        size_t n = strlen(prefix), id = strlen(url) > n ? strlen(url + n) : 0;
+        if (strncmp(url, prefix, n) || id < 3 || id > 16) return false;
+        for (const char *p = url + n; *p; p++)
+            if (!isalnum((unsigned char)*p)) return false;
+        return true;
+    }
     if (strcmp(r->source, "vikingfile")) {
         const char *prefixes[] = {"https://akirabox.com/", "https://akirabox.to/", "https://datanodes.to/"};
         for (size_t i = 0; i < 3; i++) {
@@ -139,10 +148,13 @@ static bool generated_route(const Release *r, const char *url) {
     if (!path || path - host > 253 || strchr(url, '#')) return false;
     size_t n = (size_t)(path - host);
     bool akira = !strcmp(r->source, "akirabox"), data = !strcmp(r->source, "datanodes");
-    bool fichier = !strcmp(r->source, "1fichier");
+    bool fichier = !strcmp(r->source, "1fichier"), rootz = !strcmp(r->source, "rootz");
     bool gateway = data && n == strlen("tunnel5.dlproxy.uk") && !memcmp(host, "tunnel5.dlproxy.uk", n);
     bool allowed = akira && ((n == 12 && !strncmp(host, "akirabox.com", n)) ||
                             (n == 11 && !strncmp(host, "akirabox.to", n)));
+    /* The CDN a Rootz page hands its Download button to (observed 2026-10-20). Opaque path;
+     * the name and size come from the response's own headers at capture. */
+    if (rootz) allowed = n == strlen("cdn-files.alcyone.so") && !memcmp(host, "cdn-files.alcyone.so", n);
     if (data) {
         const char *base = "datanodes.to"; size_t b = strlen(base);
         allowed = gateway || (n >= b && !memcmp(host + n - b, base, b) &&
@@ -191,6 +203,13 @@ static bool generated_route(const Release *r, const char *url) {
          * validation as filename routes. Only this observed gateway is allowed. */
         if (name - path != 10 || end - name < 32 || end - name > 1024 ||
             strncmp(end, "?sig=", 5) || !end[5] || strchr(end + 5, '&')) return false;
+        for (const unsigned char *p = (const void *)url; *p; p++)
+            if (*p <= 32 || *p >= 127 || *p == '\\') return false;
+        return true;
+    }
+    if (rootz || (akira && r->local && r->size_pending)) {
+        /* A name still to be learned cannot be compared yet; it is checked again against this
+         * route once the response has named the file. */
         for (const unsigned char *p = (const void *)url; *p; p++)
             if (*p <= 32 || *p >= 127 || *p == '\\') return false;
         return true;

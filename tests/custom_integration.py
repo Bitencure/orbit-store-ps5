@@ -25,7 +25,7 @@ import urllib.parse
 import urllib.request
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-BIN = ROOT / 'build' / 'orbit-test'
+BIN = pathlib.Path(os.environ.get('ORBIT_TEST_BIN', ROOT / 'build' / 'orbit-test'))
 DATA = bytes((i * 7 + i // 251) % 256 for i in range(1 << 20))
 ETAG = '"v1-' + hashlib.md5(DATA).hexdigest()[:12] + '"'
 MODIFIED = 'Wed, 01 Jan 2025 00:00:00 GMT'
@@ -103,6 +103,21 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path in simple:
             status, headers, body = simple[path]
             return self.reply(status, headers, body, send_body)
+        if path.startswith('/api/alpha1/'):
+            body = {'/api/alpha1/abc123/file.bin': {'file': path[4:], 'status': True, 'size': 52428800, 'views': 3, 'short_link': None},
+                    '/api/alpha1/gone00/file.bin': {'file': path[4:], 'status': False, 'size': None, 'views': 3, 'short_link': None},
+                    '/api/alpha1/unreachable/file.bin': {'file': path[4:], 'status': 'unknown', 'size': None, 'views': None, 'short_link': None}}.get(path)
+            if body is None:
+                return self.reply(404, {'Content-Type': 'text/plain'}, b'unknown', send_body)
+            return self.reply(200, {'Content-Type': 'application/json'}, json.dumps(body).encode(), send_body)
+        if path.startswith('/dl/'):
+            named = {'/dl/learned.bin': 'attachment; filename="learned-name.bin"',
+                     '/dl/evil.bin': 'attachment; filename="../../evil-name.bin"',
+                     '/dl/nameless.bin': None}
+            if path not in named:
+                return self.reply(404, {'Content-Type': 'text/plain'}, b'unknown', send_body)
+            extra = {'Content-Disposition': named[path]} if named[path] else {}
+            return self.serve_data(DATA, send_body, rng, if_match, extra)
         if path.startswith('/torbox-cdn/'):
             name = path.rsplit('/', 1)[1]
             return self.serve_data(DATA, send_body, rng, if_match, {'Content-Disposition': f'attachment; filename="{name}"'})
@@ -225,7 +240,8 @@ class Service:
         self.origin, self.port, self.token, self.process = origin, free_port(), None, None
 
     def start(self, extra_env=None):
-        env = dict(os.environ, ORBIT_TEST_URL=self.origin.base + '/fixture.bin', ORBIT_TEST_SIZE='1024')
+        env = dict(os.environ, ORBIT_TEST_URL=self.origin.base + '/fixture.bin', ORBIT_TEST_SIZE='1024',
+                   ORBIT_TEST_FILEDITCH_API='http://127.0.0.1:1/api')
         env.update(extra_env or {})
         self.process = subprocess.Popen(
             [str(BIN), '--state', str(self.state), '--storage', str(self.storage), '--port', str(self.port)],
@@ -377,15 +393,14 @@ class SourceGate(Base):
         self.assertEqual(self.origin.requests('/file.bin'), [], 'nothing may be fetched before consent')
 
     def test_hosts_without_a_working_flow_are_refused_with_a_reason(self):
-        for url, provider in [('https://rootz.so/file/abc', 'rootz'), ('https://new.fileditch.com/a/b.bin', 'fileditch'),
-                              ('https://itsfileditchfiles.st/balpha34/abc/x.bin', 'fileditch')]:
+        for url in ('https://new.fileditch.com/a/b.bin', 'https://itsfileditchfiles.st/balpha34/abc/x.bin'):
             reply = self.service.resolve(url)
-            self.assertEqual((reply['state'], reply['provider']), ('unsupported', provider), reply)
-            self.assertTrue(reply['message'])
-        self.assertIn('Cloudflare', self.service.resolve('https://new.fileditch.com/a/b.bin')['message'])
+            self.assertEqual((reply['state'], reply['provider']), ('unsupported', 'fileditch'), reply)
+            self.assertIn('Cloudflare', reply['message'])
 
     def test_torbox_only_hosts_need_their_toggle_first(self):
-        for url in ('https://gofile.io/d/AbCdEf', 'https://fuckingfast.co/abc'):
+        for url in ('https://gofile.io/d/AbCdEf', 'https://fuckingfast.co/abc', 'https://rootz.so/d/ba7ua',
+                    'https://1fichier.com/?abcdefghij0123456789'):
             self.assertEqual(self.service.resolve(url)['state'], 'source-disabled', url)
 
 
@@ -634,7 +649,7 @@ class LinkCatalogue(Base):
         rejected = {r['index']: r['reason'] for r in body['result']['rejected']}
         self.assertEqual(sorted(rejected), [1, 2, 3, 5, 6, 7])
         self.assertIn('human-verification', rejected[5])
-        self.assertIn('no verifiable', rejected[2])
+        self.assertIn('not a link Orbit can open', rejected[2])
         self.assertEqual({l['title'] for l in body['links']}, {'Mine A', 'Gofile'})
         self.assertTrue(all(l['id'].startswith('link-') for l in body['links']))
 
@@ -739,6 +754,8 @@ class TorBoxMock(socketserver.ThreadingMixIn, http.server.HTTPServer):
     def __init__(self, origin, domains):
         super().__init__(('127.0.0.1', 0), TorBoxHandler)
         self.origin, self.domains, self.items, self.calls = origin, domains, {}, []
+        self.create_error = None  # (http status, TorBox error code) to answer createwebdownload with
+        self.item_state = 'completed'  # what a created download then reports
         threading.Thread(target=self.serve_forever, daemon=True).start()
 
     @property
@@ -762,14 +779,25 @@ class TorBoxHandler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def item(self, ident, link):
-        return {'id': ident, 'original_url': link, 'download_state': 'completed', 'download_present': True,
-                'download_finished': True, 'files': [{'id': 1, 'name': self.NAME, 'short_name': self.NAME,
+        done = self.server.item_state == 'completed'
+        return {'id': ident, 'original_url': link, 'download_state': self.server.item_state, 'download_present': done,
+                'download_finished': done, 'files': [{'id': 1, 'name': self.NAME, 'short_name': self.NAME,
                                                       'size': len(DATA), 'infected': False, 'zipped': False}]}
 
     def do_POST(self):
         length = int(self.headers.get('Content-Length') or 0)
         form = urllib.parse.parse_qs(self.rfile.read(length).decode())
         self.server.calls.append(('POST', self.path, form))
+        if self.path.startswith('/webdl/createwebdownload') and self.server.create_error:
+            status, code = self.server.create_error
+            body = json.dumps({'success': False, 'error': code, 'detail': 'see https://secret.example/token=abc123 for your key sk-live-9999',
+                               'data': None}).encode()
+            self.send_response(status)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if self.path.startswith('/webdl/createwebdownload'):
             link = form['link'][0]
             self.server.items[77] = link
@@ -833,10 +861,10 @@ class TorBoxLinks(TorBoxBase):
         self.assertEqual(reply['state'], 'unsupported', reply)
         self.assertIn('Connect TorBox', reply['message'])
         self.assertIn('premium', reply['message'])
-        details = self.service.resolve('https://1fichier.com/?abcdefghij0123456789')
-        self.assertEqual(details['state'], 'needs-details', details)
-        self.assertNotIn('torboxReleaseId', details)
-        self.assertFalse(details['delivery']['torbox'])
+        browser = self.service.resolve('https://1fichier.com/?abcdefghij0123456789')
+        self.assertEqual(browser['state'], 'needs-browser', browser)
+        self.assertTrue(browser['sizePending'] and browser['viaBrowser'])
+        self.assertFalse(browser['delivery']['torbox'])
 
     def test_a_2_hosts_torbox_does_not_list_are_refused(self):
         self.connect()
@@ -844,12 +872,12 @@ class TorBoxLinks(TorBoxBase):
         self.assertEqual(reply['state'], 'unsupported', reply)
         self.assertIn('does not list', reply['message'])
 
-    def test_b_1_unknown_details_can_be_delivered_by_torbox(self):
+    def test_b_1_one_pending_link_offers_both_the_browser_and_torbox(self):
         self.connect()
         reply = self.service.resolve('https://1fichier.com/?abcdefghij0123456789')
-        self.assertEqual(reply['state'], 'needs-details', reply)
-        self.assertTrue(reply['delivery']['torbox'])
-        self.assertTrue(reply['torboxReleaseId'].startswith('custom-'))
+        self.assertEqual(reply['state'], 'needs-browser', reply)
+        self.assertTrue(reply['delivery']['direct'] and reply['delivery']['torbox'], reply)
+        self.assertTrue(reply['sizePending'])
 
     def test_c_torbox_only_download_adopts_torbox_name_and_size(self):
         self.connect()
@@ -873,6 +901,64 @@ class TorBoxLinks(TorBoxBase):
         self.assertEqual(created[0][2]['link'][0], 'https://gofile.io/d/AbCdEf')
 
 
+class TorBoxRejections(unittest.TestCase):
+    """A link TorBox refuses must be explained, never relayed as free text, and never queued as success."""
+    CASES = [('LINK_OFFLINE', 'offline or has been removed'),
+             ('DOWNLOAD_TOO_LARGE', 'exceeds your TorBox download limit'),
+             ('PLAN_RESTRICTED_FEATURE', 'plan does not include'),
+             ('ACTIVE_LIMIT', 'too many active TorBox downloads'),
+             ('COOLDOWN_LIMIT', 'limiting how fast'),
+             ('VENDOR_DISABLED', 'turned this host off'),
+             ('NO_SERVERS_AVAILABLE', 'busy or having a problem'),
+             ('SOMETHING_NEW', 'could not prepare this file (SOMETHING_NEW)'),
+             ('not a code, has spaces!', 'could not prepare this file. Check your account')]
+
+    def run_case(self, code, item_state='completed'):
+        with tempfile.TemporaryDirectory() as tmp:
+            origin = Origin()
+            torbox = TorBoxMock(origin, ['gofile.io', '127.0.0.1'])
+            torbox.create_error = (400, code) if code else None
+            torbox.item_state = item_state
+            service = Service(tmp, origin)
+            try:
+                service.start({'ORBIT_TEST_TORBOX_URL': torbox.base})
+                service.enable('gofile')
+                status, _ = service.call('POST', '/api/v1/debrid', {'action': 'connect', 'apiKey': 'k' * 24})
+                self.assertEqual(status, 202)
+                for _ in range(60):
+                    state = service.call('GET', '/api/v1/debrid')[1]
+                    if state['connected'] and not state['busy']:
+                        break
+                    time.sleep(0.2)
+                reply = service.resolve('https://gofile.io/d/Rejected')
+                self.assertEqual(reply['state'], 'ready', reply)
+                status, body = service.queue(reply['releaseId'], 'torbox')
+                self.assertEqual(status, 201, body)
+                job = service.wait_job(body['id'], {'error', 'complete'}, 60)
+                created = [c for c in torbox.calls if c[1].startswith('/webdl/createwebdownload')]
+                return job, len(created)
+            finally:
+                service.stop()
+                torbox.shutdown()
+                origin.shutdown()
+
+    def test_an_accepted_link_that_then_fails_is_reported(self):
+        job, attempts = self.run_case(None, item_state='failed')
+        self.assertEqual(job['status'], 'error', job)
+        self.assertIn('could not prepare this file (failed)', job['error'])
+        self.assertEqual(attempts, 1)
+
+    def test_each_rejection_is_explained_and_nothing_is_relayed(self):
+        for code, expected in self.CASES:
+            with self.subTest(code=code):
+                job, attempts = self.run_case(code)
+                self.assertEqual(job['status'], 'error', job)
+                self.assertIn(expected, job['error'])
+                for leaked in ('secret.example', 'sk-live', 'abc123', 'see https'):
+                    self.assertNotIn(leaked, job['error'])
+                self.assertEqual(attempts, 1, 'a rejected link is not hammered')
+
+
 class TorBoxNameClash(TorBoxBase):
     sources = ('gofile',)
 
@@ -890,6 +976,108 @@ class TorBoxNameClash(TorBoxBase):
         self.assertIn('already uses TorBox', job['error'])
         self.assertEqual(existing.read_bytes(), b'keep me')
         self.assertEqual([p.name for p in folder.glob('*.part')], [])
+
+
+class FileDitchStatus(Base):
+    """FileDitch cannot be downloaded by a script, but its open status endpoint can say whether a link is alive."""
+    sources = ()
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.origin = Origin()
+        cls.service = Service(cls.tmp.name, cls.origin)
+        cls.service.start({'ORBIT_TEST_FILEDITCH_API': cls.origin.base + '/api'})
+
+    def test_an_existing_file_is_confirmed_but_not_downloadable(self):
+        reply = self.service.resolve('https://new.fileditch.com/alpha1/abc123/file.bin')
+        self.assertEqual((reply['state'], reply['exists'], reply['sizeBytes']), ('unsupported', True, 52428800), reply)
+        self.assertIn('confirms this file exists (50.0 MB)', reply['message'])
+        self.assertIn('Cloudflare', reply['message'])
+        self.assertNotIn('releaseId', reply)
+
+    def test_a_removed_file_is_reported_as_gone(self):
+        reply = self.service.resolve('https://itsfileditchfiles.st/alpha1/gone00/file.bin')
+        self.assertEqual((reply['state'], reply['exists']), ('unsupported', False), reply)
+        self.assertIn('no longer exists', reply['message'])
+
+    def test_an_unreachable_origin_is_not_a_verdict(self):
+        reply = self.service.resolve('https://new.fileditch.com/alpha1/unreachable/file.bin')
+        self.assertNotIn('exists', reply)
+        self.assertIn('Cloudflare', reply['message'])
+
+    def test_malformed_paths_never_reach_the_network(self):
+        before = len(self.origin.log)
+        for url in ('https://new.fileditch.com/only-one/segment.bin', 'https://new.fileditch.com/a/../b/c.bin'):
+            reply = self.service.resolve(url)
+            self.assertEqual(reply['state'], 'unsupported')
+            self.assertNotIn('exists', reply)
+        self.assertEqual(len(self.origin.log), before)
+
+
+class LearnedCapture(Base):
+    """A browser-assisted link whose name and size the provider's own response supplies."""
+    sources = ('1fichier',)
+    capture = '/dl/learned.bin'
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.origin = Origin()
+        cls.service = Service(cls.tmp.name, cls.origin)
+        cls.service.start({'ORBIT_TEST_CAPTURE_URL': cls.origin.base + cls.capture})
+        cls.service.enable(*cls.sources)
+
+    def capture_job(self):
+        reply = self.service.resolve('https://1fichier.com/?abcdefghij0123456789')
+        self.assertEqual((reply['state'], reply['sizePending']), ('needs-browser', True), reply)
+        status, body = self.service.call('POST', '/api/v1/browser', {
+            'action': 'start', 'releaseId': reply['releaseId'], 'storageId': self.service.storage_id(), 'returnTarget': 'browser'})
+        self.assertEqual(status, 202, body)
+        deadline, state = time.time() + 60, {}
+        while time.time() < deadline:
+            state = self.service.call('GET', '/api/v1/browser')[1]
+            if state['state'] in ('queued', 'failed', 'cancelled'):
+                break
+            time.sleep(0.3)
+        return state
+
+    def test_name_and_size_come_from_the_provider_response(self):
+        state = self.capture_job()
+        self.assertEqual(state['state'], 'queued', state)
+        job = self.service.wait_job(state['jobId'], {'complete', 'error'}, 90)
+        self.assertEqual(job['status'], 'complete', job)
+        self.assertEqual((job['filename'], job['total']), ('learned-name.bin', len(DATA)))
+        self.assertEqual(sha256_file(job['path']), hashlib.sha256(DATA).hexdigest())
+        self.assertEqual((job['sourceId'], job['origin']), ('1fichier', 'local'))
+
+
+class LearnedCaptureNeedsAName(LearnedCapture):
+    capture = '/dl/nameless.bin'
+
+    def test_name_and_size_come_from_the_provider_response(self):
+        pass
+
+    def test_a_provider_that_names_nothing_queues_nothing(self):
+        state = self.capture_job()
+        self.assertEqual(state['state'], 'failed', state)
+        self.assertIn('did not identify', state['message'])
+        self.assertEqual(self.service.jobs(), [])
+
+
+class LearnedCaptureHostileName(LearnedCapture):
+    capture = '/dl/evil.bin'
+
+    def test_name_and_size_come_from_the_provider_response(self):
+        pass
+
+    def test_a_traversal_name_is_made_safe_not_trusted(self):
+        state = self.capture_job()
+        self.assertEqual(state['state'], 'queued', state)
+        job = self.service.wait_job(state['jobId'], {'complete', 'error'}, 90)
+        self.assertEqual((job['status'], job['filename']), ('complete', 'evil-name.bin'), job)
+        self.assertEqual(pathlib.Path(job['path']).parent.name, 'homebrew')
+        self.assertFalse((self.service.storage.parent / 'evil-name.bin').exists())
 
 
 class VikingPastedLinks(Base):

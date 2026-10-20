@@ -31,7 +31,7 @@ bool provider_transfer_url_allowed(const char *url) {
          !strcmp(host, "akirabox.com") || suffix(host, ".akirabox.com") ||
          !strcmp(host, "akirabox.to") || !strcmp(host, "eufb.akirabox.xyz") ||
          !strcmp(host, "datanodes.to") || suffix(host, ".datanodes.to") ||
-         !strcmp(host, "tunnel5.dlproxy.uk") ||
+         !strcmp(host, "tunnel5.dlproxy.uk") || !strcmp(host, "cdn-files.alcyone.so") ||
          (!strncmp(host, "a-", 2) && suffix(host, ".1fichier.com")) ||
          suffix(host, ".s3.bhs.io.cloud.ovh.net") || suffix(host, ".r2.cloudflarestorage.com"));
 #endif

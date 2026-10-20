@@ -61,7 +61,8 @@ export type SourceId =
   // Fork: hosts for links the user pastes.
   | "web"
   | "gofile"
-  | "fuckingfast";
+  | "fuckingfast"
+  | "rootz";
 export interface SourceSettings {
   enabled: SourceId[];
   acknowledged: boolean;

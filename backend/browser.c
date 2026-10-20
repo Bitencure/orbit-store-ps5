@@ -2,6 +2,10 @@
 #include "browser_platform.h"
 #include "browser_match.h"
 #include "network.h"
+/* Test builds and the local verification build feed a capture from the environment instead of a PS5 browser. */
+#if defined(ORBIT_TEST) || defined(ORBIT_LIVE_VERIFY)
+#define ORBIT_SIMULATED_CAPTURE 1
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -29,13 +33,13 @@ static int64_t milliseconds(void) {
         (int64_t)now.tv_sec * 1000 + now.tv_nsec / 1000000;
 }
 static bool available(void) {
-#ifdef ORBIT_TEST
+#ifdef ORBIT_SIMULATED_CAPTURE
     return true;
 #else
     return !orbit.desktop;
 #endif
 }
-#ifndef ORBIT_TEST
+#ifndef ORBIT_SIMULATED_CAPTURE
 static time_t monotonic(void) {
     struct timespec now;
     return clock_gettime(CLOCK_MONOTONIC, &now) ? 0 : now.tv_sec;
@@ -78,7 +82,7 @@ static int validate_capture(Release *r, char *etag, char *modified, char *error,
     pthread_mutex_unlock(&orbit.mutex);
     return result;
 }
-#ifndef ORBIT_TEST
+#ifndef ORBIT_SIMULATED_CAPTURE
 static bool native_active(void *context) {
     return active() && probe_target_active(context);
 }
@@ -104,7 +108,7 @@ static bool capture(Release *r, char *etag, char *modified, bool *validated, cha
     pthread_mutex_lock(&orbit.mutex);
     session.capture_ms = milliseconds() - session.started_ms;
     pthread_mutex_unlock(&orbit.mutex);
-#ifdef ORBIT_TEST
+#ifdef ORBIT_SIMULATED_CAPTURE
     (void)etag; (void)modified;
     /* Compile-time-only simulator: not exposed through the API or in ELF builds. */
     const char *candidate = getenv("ORBIT_TEST_CAPTURE_URL");
@@ -194,6 +198,16 @@ static bool capture(Release *r, char *etag, char *modified, bool *validated, cha
                     state_locked("validating", "Checking the selected file before adding it to Downloads…");
                 pthread_mutex_unlock(&orbit.mutex);
                 int invalid = validate_capture(&candidate, etag, modified, error, cap);
+                if (!invalid && r->size_pending) {
+                    /* The provider's response named the file; the job is created from that identity. */
+                    r->size = candidate.size;
+                    r->size_pending = false;
+                    memcpy(r->filename, candidate.filename, sizeof r->filename);
+                    memcpy(r->title, candidate.title, sizeof r->title);
+                    memcpy(r->format, candidate.format, sizeof r->format);
+                    memcpy(r->compression, candidate.compression, sizeof r->compression);
+                    r->archive_unverified = candidate.archive_unverified;
+                }
                 memset(&candidate, 0, sizeof candidate);
                 if (invalid) {
                     pthread_mutex_lock(&orbit.mutex);

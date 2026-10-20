@@ -106,18 +106,46 @@ static size_t headers(char *data, size_t a, size_t b, void *ctx) {
     }
     return n;
 }
+/* TorBox's own error code is a short upper-case token. It is the only part of its reply shown to the
+ * user, so a rejected link can be told apart and reported without trusting free text. */
+static bool code_token(const char *code) {
+    size_t n = strlen(code);
+    if (n < 3 || n > 40) return false;
+    for (size_t i = 0; i < n; i++)
+        if (!((code[i] >= 'A' && code[i] <= 'Z') || (code[i] >= '0' && code[i] <= '9') || code[i] == '_')) return false;
+    return true;
+}
 static void message(const cJSON *json, long status, char *err, size_t cap) {
     const char *code = json_text(json, "error");
-    const char *text = status == 401 || status == 403 || !strcmp(code, "BAD_TOKEN") || !strcmp(code, "NO_AUTH")
-        ? "TorBox rejected the API key. Reconnect your account."
-        : status == 429 ? "TorBox rate limit reached. Wait before retrying."
-        : !strcmp(code, "PLAN_RESTRICTED_FEATURE") ? "Your TorBox plan does not include this download feature."
-        : !strcmp(code, "DOWNLOAD_TOO_LARGE") ? "This file exceeds your TorBox download limit."
-        : !strcmp(code, "ITEM_NOT_FOUND") ? "This download is no longer in your TorBox account."
-        : !strcmp(code, "DUPLICATE_ITEM") ? "This link is already in your TorBox account. Retry to check it."
-        : "TorBox could not prepare this file. Check your account and try again.";
-    /* Never relay upstream text: it may contain credentials, a URL or account data. */
-    copy_text(err, cap, text);
+    static const struct { const char *code, *text; } known[] = {
+        {"BAD_TOKEN", "TorBox rejected the API key. Reconnect your account."},
+        {"NO_AUTH", "TorBox rejected the API key. Reconnect your account."},
+        {"AUTH_ERROR", "TorBox rejected the API key. Reconnect your account."},
+        {"PLAN_RESTRICTED_FEATURE", "Your TorBox plan does not include this download feature."},
+        {"DOWNLOAD_TOO_LARGE", "This file exceeds your TorBox download limit."},
+        {"ITEM_NOT_FOUND", "This download is no longer in your TorBox account."},
+        {"DUPLICATE_ITEM", "This link is already in your TorBox account. Retry to check it."},
+        {"LINK_OFFLINE", "TorBox says this link is offline or has been removed."},
+        {"COOLDOWN_LIMIT", "TorBox is limiting how fast you can add links. Wait a few minutes, then retry."},
+        {"ACTIVE_LIMIT", "You have too many active TorBox downloads. Let some finish or remove them in your TorBox account."},
+        {"MONTHLY_LIMIT", "Your TorBox monthly download limit has been reached."},
+        {"VENDOR_DISABLED", "TorBox has turned this host off for now. Try the original source."},
+        {"INVALID_OPTION", "TorBox did not accept this link."},
+        {"MISSING_REQUIRED_OPTION", "TorBox did not accept this link."},
+        {"NO_SERVERS_AVAILABLE", "TorBox is busy or having a problem. Try again in a few minutes."},
+        {"DOWNLOAD_SERVER_ERROR", "TorBox is busy or having a problem. Try again in a few minutes."},
+        {"BACKEND_ERROR", "TorBox is busy or having a problem. Try again in a few minutes."},
+        {"DATABASE_ERROR", "TorBox is busy or having a problem. Try again in a few minutes."},
+    };
+    const char *text = NULL;
+    for (size_t i = 0; i < sizeof known / sizeof known[0]; i++)
+        if (!strcmp(code, known[i].code)) text = known[i].text;
+    if (!text && (status == 401 || status == 403)) text = "TorBox rejected the API key. Reconnect your account.";
+    if (!text && status == 429) text = "TorBox rate limit reached. Wait before retrying.";
+    if (text) { copy_text(err, cap, text); return; }
+    /* Unlisted code: say so and name the code, never the upstream text, which may hold a URL or account data. */
+    if (code_token(code)) snprintf(err, cap, "TorBox could not prepare this file (%s). Check your account and try again.", code);
+    else copy_text(err, cap, "TorBox could not prepare this file. Check your account and try again.");
 }
 static cJSON *call(const char *key, const char *path, const char *form, bool bearer,
                    Job *job, time_t *retry, char *err, size_t cap, bool *rejected) {
@@ -505,7 +533,14 @@ int debrid_resolve(Job *job, char *url, size_t url_cap, time_t *retry_at, char *
     }
     const char *state = json_text(item, "download_state");
     if (!strcmp(state, "error") || !strcmp(state, "failed") || *json_text(item, "error")) {
-        cJSON_Delete(list); copy_text(err, cap, "TorBox could not prepare this file. Check its status in your TorBox account."); goto end;
+        /* Copy the state before the reply that owns it is freed. Only a plain word is ever shown. */
+        char shown[32];
+        copy_text(shown, sizeof shown, state);
+        cJSON_Delete(list);
+        if (code_token(shown) || (shown[0] && strlen(shown) <= 24 && strspn(shown, "abcdefghijklmnopqrstuvwxyz_") == strlen(shown)))
+            snprintf(err, cap, "TorBox could not prepare this file (%s). Check its status in your TorBox account.", shown);
+        else copy_text(err, cap, "TorBox could not prepare this file. Check its status in your TorBox account.");
+        goto end;
     }
     if (!cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(item, "download_present")) ||
         !cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(item, "download_finished"))) {

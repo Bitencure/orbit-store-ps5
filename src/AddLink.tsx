@@ -78,7 +78,7 @@ function Facts({ reply }: { reply: LinkReply }) {
     <ul className="add-link-facts">
       <li>{reply.providerLabel}</li>
       <li>
-        {reply.sizePending ? t("Size comes from TorBox") : bytes(reply.sizeBytes || 0)}
+        {reply.sizePending ? t("Name and size are confirmed when the file is ready") : bytes(reply.sizeBytes || 0)}
       </li>
       {reply.state === "ready" && !reply.sizePending && (
         <li>{reply.resumable ? t("Can resume if interrupted") : t("Starts over if interrupted")}</li>
@@ -300,57 +300,8 @@ export function AddLink({
       )}
 
       {reply && reply.state === "needs-details" && (
-        <div className="add-link-card">
-          <h2>{reply.providerLabel}</h2>
-          <p>{t(reply.message)}</p>
-          {reply.delivery?.torbox && (
-            <Select label={t("Save to")} value={drive} options={options} onChange={setDrive} disabled={working || !options.length} />
-          )}
-          {reply.delivery?.torbox && (
-            <div className="actions">
-              <button
-                className="primary"
-                disabled={working || !drive}
-                onClick={() => {
-                  setDelivery("torbox");
-                  void (async () => {
-                    setWorking(true);
-                    setError("");
-                    try {
-                      const created = await api<{ id: string }>("/downloads", { releaseId: reply.torboxReleaseId, storageId: drive, delivery: "torbox" });
-                      onQueued?.(created.id);
-                    } catch (e) {
-                      setError((e as Error).message);
-                    } finally {
-                      if (alive.current) setWorking(false);
-                    }
-                  })();
-                }}
-              >
-                {t("Download via TorBox")}
-              </button>
-            </div>
-          )}
-          <div className="add-link-form">
-            <label>
-              {t("File name")}
-              <input type="text" maxLength={159} value={name} onChange={(e) => setName(e.target.value)} />
-            </label>
-            <label>
-              {t("Size in bytes")}
-              <input type="text" inputMode="numeric" value={size} onChange={(e) => setSize(e.target.value)} />
-            </label>
-            <div className="actions">
-              <button type="button" disabled={check.busy || !name.trim() || !size.trim()} onClick={() => submit()}>
-                {t("Use the PS5 browser")}
-              </button>
-              {reply.delivery?.torboxReason && !reply.delivery.torbox && openTorbox && reply.torboxSetup && (
-                <button type="button" onClick={openTorbox}>
-                  {t("Set up TorBox")}
-                </button>
-              )}
-            </div>
-          </div>
+        <div className="notice" role="status">
+          {t(reply.message)}
         </div>
       )}
 

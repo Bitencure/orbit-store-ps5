@@ -317,3 +317,70 @@ int resolve_viking(const char *page_url, atomic_bool *cancel, Resolved *out, cha
     free(body.data);
     return result;
 }
+
+int resolve_fileditch_status(const char *url, atomic_bool *cancel, int64_t *size) {
+    *size = 0;
+    CURLU *u = curl_url();
+    char *path = NULL;
+    bool ok = u && !curl_url_set(u, CURLUPART_URL, url, 0) && !curl_url_get(u, CURLUPART_PATH, &path, 0);
+    char api[1024] = {0};
+    /* "Take any file URL and insert /api after the host": /<folder>/<id>/<filename>. */
+    if (ok) {
+        int segments = 0;
+        for (const char *p = path; *p; p++) segments += *p == '/';
+        ok = strlen(path) < 700 && segments >= 3 && !strstr(path, "..") && !strstr(path, "//");
+        if (ok) {
+            const char *base = "https://fileditchfiles.st/api";
+#ifdef ORBIT_TEST
+            const char *override = getenv("ORBIT_TEST_FILEDITCH_API");
+            if (override && !strncmp(override, "http://127.0.0.1:", 17)) base = override;
+#endif
+            ok = snprintf(api, sizeof api, "%s%s", base, path) < (int)sizeof api;
+        }
+    }
+    curl_free(path);
+    curl_url_cleanup(u);
+    if (!ok) return -1;
+    Body body = {0};
+    CURL *c = curl_easy_init();
+    if (!c) return -1;
+    struct curl_blob ca = {(void *)orbit_ca, sizeof orbit_ca - 1, CURL_BLOB_COPY};
+    curl_easy_setopt(c, CURLOPT_URL, api);
+    curl_easy_setopt(c, CURLOPT_CAINFO_BLOB, &ca);
+    curl_easy_setopt(c, CURLOPT_SSL_VERIFYPEER, 1L);
+    curl_easy_setopt(c, CURLOPT_SSL_VERIFYHOST, 2L);
+#ifdef ORBIT_TEST
+    curl_easy_setopt(c, CURLOPT_PROTOCOLS_STR, "http,https");
+#else
+    curl_easy_setopt(c, CURLOPT_PROTOCOLS_STR, "https");
+#endif
+    curl_easy_setopt(c, CURLOPT_FOLLOWLOCATION, 0L);
+    curl_easy_setopt(c, CURLOPT_NOSIGNAL, 1L);
+    curl_easy_setopt(c, CURLOPT_CONNECTTIMEOUT, 10L);
+    curl_easy_setopt(c, CURLOPT_TIMEOUT, 15L);
+    curl_easy_setopt(c, CURLOPT_USERAGENT, "OrbitStore/" ORBIT_VERSION);
+    curl_easy_setopt(c, CURLOPT_PROXY, "");
+    curl_easy_setopt(c, CURLOPT_OPENSOCKETFUNCTION, provider_open_socket);
+    curl_easy_setopt(c, CURLOPT_NOPROGRESS, 0L);
+    curl_easy_setopt(c, CURLOPT_XFERINFOFUNCTION, cancel_progress);
+    curl_easy_setopt(c, CURLOPT_XFERINFODATA, cancel);
+    curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, collect);
+    curl_easy_setopt(c, CURLOPT_WRITEDATA, &body);
+    CURLcode rc = curl_easy_perform(c);
+    long status = 0;
+    curl_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &status);
+    curl_easy_cleanup(c);
+    int result = -1;
+    if (rc == CURLE_OK && status == 200 && body.data) {
+        cJSON *json = cJSON_Parse(body.data);
+        const cJSON *exists = cJSON_GetObjectItemCaseSensitive(json, "status");
+        const cJSON *bytes = cJSON_GetObjectItemCaseSensitive(json, "size");
+        /* true = exists, false = gone, "unknown" = the origin could not be reached (not a verdict). */
+        if (cJSON_IsTrue(exists) && cJSON_IsNumber(bytes) && bytes->valuedouble >= 0 &&
+            bytes->valuedouble <= (double)MAX_FILE_SIZE) { *size = (int64_t)bytes->valuedouble; result = 1; }
+        else if (cJSON_IsFalse(exists)) result = 0;
+        cJSON_Delete(json);
+    }
+    free(body.data);
+    return result;
+}

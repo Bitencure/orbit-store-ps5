@@ -65,18 +65,24 @@ def upload(host, payload, name):
     if host == 'gofile':
         body, headers = multipart({}, name, payload)
         return json.loads(fetch('https://upload.gofile.io/uploadfile', body, headers))['data']['downloadPage']
+    if host == 'rootz':
+        body, headers = multipart({}, name, payload)
+        data = json.loads(fetch('https://rootz.so/api/files/upload', body, headers))['data']
+        upload.rootz_uuid = data['id']
+        return f"https://rootz.so/d/{data['shortId']}"
     raise ValueError(host)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--yes', action='store_true', help='confirm that uploading random 1 KB files to public hosts is fine')
-    parser.add_argument('--only', default='web,viking,ditch,gofile')
+    parser.add_argument('--only', default='web,viking,ditch,gofile,rootz')
+    parser.add_argument('--rootz-uuid', help='the file id of a reused --link rootz=… (needed for the CDN step)')
     parser.add_argument('--link', action='append', default=[], metavar='HOST=URL', help='reuse an existing link instead of uploading')
     args = parser.parse_args()
     wanted = set(args.only.split(','))
     links = dict(item.split('=', 1) for item in args.link)
-    uploads = [h for h in ('viking', 'ditch', 'gofile') if h in wanted and h not in links]
+    uploads = [h for h in ('viking', 'ditch', 'gofile', 'rootz') if h in wanted and h not in links]
     if uploads and not args.yes:
         sys.exit('This uploads one random 1 KB file to: ' + ', '.join(uploads) + '. Re-run with --yes to allow it.')
     if not ci.BIN.exists():
@@ -91,7 +97,7 @@ def main():
     tmp = tempfile.TemporaryDirectory()
     service = ci.Service(tmp.name, types.SimpleNamespace(base='http://127.0.0.1:1'))
     original = ci.subprocess.Popen
-    ci.subprocess.Popen = lambda cmd, **kw: original(cmd, **{**kw, 'env': {k: v for k, v in kw['env'].items() if not k.startswith('ORBIT_TEST')}})
+    ci.subprocess.Popen = lambda cmd, **kw: original(cmd, **{**kw, 'env': {k: v for k, v in kw['env'].items() if not k.startswith('ORBIT_TEST') or k == 'ORBIT_TEST_CAPTURE_URL'}})
     results = []
 
     def record(host, expectation, ok, observed):
@@ -100,7 +106,7 @@ def main():
 
     try:
         service.start()
-        service.enable('web', 'vikingfile', 'gofile')
+        service.enable('web', 'vikingfile', 'gofile', 'rootz')
         if 'web' in wanted:
             reply = service.resolve(WEB_FILE, 'live-web-check.bin', timeout=60)
             ok = reply['state'] == 'ready' and reply['sizeBytes'] > 0
@@ -120,13 +126,42 @@ def main():
                    f"{reply['state']} {reply.get('filename')} {reply.get('sizeBytes')} bytes")
         if 'ditch' in wanted:
             reply = service.resolve(links['ditch'], timeout=60)
-            record('ditch', 'is recognised and refused with its reason', reply['state'] == 'unsupported' and reply['provider'] == 'fileditch', reply['message'])
+            record('ditch', 'confirms the file through its open status endpoint, and refuses the download with its reason',
+                   reply['state'] == 'unsupported' and reply['provider'] == 'fileditch' and reply.get('exists') is True, reply['message'])
             try:
                 fetch(links['ditch'], headers={'Range': 'bytes=0-0'})
                 challenged = 'no challenge seen: FileDitch may now be reachable by plain HTTP; re-evaluate enabling it'
             except urllib.error.HTTPError as error:
                 challenged = f'plain HTTP got {error.code}, cf-mitigated={error.headers.get("cf-mitigated")}'
             print(f'      (direct probe: {challenged})')
+        if 'rootz' in wanted:
+            page = links['rootz']
+            reply = service.resolve(page, timeout=60)
+            record('rootz', 'resolves the share page to a browser-assisted download with the name and size still to be read',
+                   reply['state'] == 'needs-browser' and reply.get('sizePending') is True, f"{reply['state']} pending={reply.get('sizePending')}")
+            uuid = getattr(upload, 'rootz_uuid', None) or args.rootz_uuid
+            if uuid:
+                # What a person's browser reveals after pressing Download on the page, taken from Rootz's documented API.
+                cdn = json.loads(fetch(f'https://rootz.so/api/files/download/{uuid}'))['data']['url']
+                service.stop()
+                service.start({'ORBIT_TEST_CAPTURE_URL': cdn})
+                service.enable('web', 'vikingfile', 'gofile', 'rootz')
+                reply = service.resolve(page, timeout=60)
+                status, body = service.call('POST', '/api/v1/browser', {'action': 'start', 'releaseId': reply['releaseId'],
+                                            'storageId': service.storage_id(), 'returnTarget': 'browser'})
+                state = {}
+                for _ in range(200):
+                    state = service.call('GET', '/api/v1/browser')[1]
+                    if state['state'] in ('queued', 'failed', 'cancelled'):
+                        break
+                    time.sleep(0.3)
+                job = service.wait_job(state['jobId'], {'complete', 'error'}, 120) if state['state'] == 'queued' else {'status': 'error', 'error': state.get('message', '')}
+                got = ci.sha256_file(job['path']) if job['status'] == 'complete' else job.get('error')
+                record('rootz', 'validates the real CDN link, learns its name and size, and downloads it byte-identical',
+                       job['status'] == 'complete' and got == hashlib.sha256(payload).hexdigest() if 'rootz' in uploads else job['status'] == 'complete',
+                       f"{job['status']} name={job.get('filename')} sha256={str(got)[:16]}")
+            else:
+                print('      (CDN step skipped: pass --rootz-uuid with a reused link)')
         if 'gofile' in wanted:
             reply = service.resolve(links['gofile'], timeout=60)
             record('gofile', 'is recognised and needs TorBox', reply['state'] == 'unsupported' and reply['provider'] == 'gofile', reply['message'])

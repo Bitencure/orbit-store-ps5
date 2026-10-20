@@ -47,6 +47,20 @@ static const char *clean(const char *in) {
     return filename_sanitize(in, out, sizeof out) ? out : NULL;
 }
 
+static Release pending(const char *source, const char *page) {
+    Release r = {0};
+    r.local = r.size_pending = true;
+    strcpy(r.id, "custom-test");
+    strcpy(r.source, source);
+    strcpy(r.title, "x");
+    strcpy(r.game_id, "custom");
+    strcpy(r.filename, "provisional");
+    strcpy(r.format, "File");
+    strcpy(r.url, page);
+    strcpy(r.browser_url, page);
+    return r;
+}
+
 int main(void) {
     /* Provider identification is by real domain, never by label or substring. */
     CHECK_STR(id_of("https://vikingfile.com/f/abcdefghij"), "vikingfile");
@@ -101,8 +115,7 @@ int main(void) {
     /* Which kinds are downloadable. */
     CHECK(host_by_id("web")->kind == HOST_WEB);
     CHECK(host_by_id("fileditch")->kind == HOST_DISABLED && *host_by_id("fileditch")->note);
-    CHECK(host_by_id("rootz")->kind == HOST_DISABLED && *host_by_id("rootz")->note);
-    CHECK(host_by_id("fuckingfast")->kind == HOST_TORBOX && host_by_id("gofile")->kind == HOST_TORBOX);
+        CHECK(host_by_id("fuckingfast")->kind == HOST_TORBOX && host_by_id("gofile")->kind == HOST_TORBOX);
     CHECK(host_by_id("vikingfile")->kind == HOST_BROWSER);
     CHECK(!host_by_id("nonsense") && !host_by_id(NULL));
     CHECK(!provider_direct_source("vikingfile") && provider_direct_source("web"));
@@ -178,6 +191,42 @@ int main(void) {
     CHECK(!disposition_filename("attachment; filename*=ISO-8859-1''x.bin", dec, sizeof dec));
     CHECK(url_last_segment("https://h.example/a/b%20c.bin?x=1", dec, sizeof dec) && !strcmp(dec, "b c.bin"));
     CHECK(!url_last_segment("https://h.example/", dec, sizeof dec));
+
+    /* Browser-assisted capture rules, with the name and size still to be learned. */
+    Release rootz = pending("rootz", "https://rootz.so/d/ba7ua");
+    CHECK(provider_browser_supported(&rootz));
+    CHECK(provider_capture_url(&rootz, "https://cdn-files.alcyone.so/anonymous/1792456490030-a.bin?filename=a.bin"));
+    CHECK(!provider_capture_url(&rootz, "https://evil.example/anonymous/1-a.bin"));
+    CHECK(!provider_capture_url(&rootz, "https://cdn-files.alcyone.so.evil.example/x/a.bin"));
+    CHECK(!provider_capture_url(&rootz, "http://cdn-files.alcyone.so/anonymous/a.bin"));
+    CHECK(!provider_capture_url(&rootz, "https://cdn-files.alcyone.so/../a.bin"));
+    CHECK(!provider_capture_url(&rootz, "https://cdn-files.alcyone.so/"));
+    CHECK(!provider_capture_url(&rootz, "https://rootz.so/d/ba7ua"));
+    CHECK(provider_transfer_url_allowed("https://cdn-files.alcyone.so/anonymous/a.bin"));
+    CHECK(!provider_transfer_url_allowed("https://evil.alcyone.so/anonymous/a.bin"));
+    Release bad_page = pending("rootz", "https://rootz.so/d/ba7ua/../x");
+    CHECK(!provider_browser_supported(&bad_page));
+    Release short_page = pending("rootz", "https://rootz.so/d/ab");
+    CHECK(!provider_browser_supported(&short_page));
+    Release fichier = pending("1fichier", "https://1fichier.com/?abcdefghij0123456789");
+    CHECK(provider_browser_supported(&fichier));
+    CHECK(provider_capture_url(&fichier, "https://a-3.1fichier.com/dkdjf93kdlf93kd8"));
+    CHECK(!provider_capture_url(&fichier, "https://cdn-files.alcyone.so/anonymous/a.bin"));
+    /* AkiraBox names the file in its link: unknown until learned, then it must agree exactly. */
+    Release akira = pending("akirabox", "https://akirabox.to/AbCdEfGhIjKl/file");
+    CHECK(provider_browser_supported(&akira));
+    CHECK(provider_capture_url(&akira, "https://akirabox.to/download/My+Game.exfat?expiration=4102444800"));
+    strcpy(akira.filename, "My Game.exfat");
+    akira.size_pending = false;
+    akira.size = 123;
+    CHECK(provider_capture_url(&akira, "https://akirabox.to/download/My+Game.exfat?expiration=4102444800"));
+    CHECK(!provider_capture_url(&akira, "https://akirabox.to/download/Other.exfat?expiration=4102444800"));
+    Release web = pending("web", "https://downloads.example.org/a.bin");
+    web.browser_url[0] = 0;
+    CHECK(!provider_browser_supported(&web));
+    CHECK(host_by_id("rootz")->kind == HOST_BROWSER);
+    char canon[128];
+    CHECK(host_canonical_url("https://www.rootz.so/d/ba7ua", canon, sizeof canon) && !strcmp(canon, "https://rootz.so/d/ba7ua"));
 
     printf("%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;

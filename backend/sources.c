@@ -14,6 +14,7 @@ unsigned source_flag(const char *id) {
     if (!strcmp(id, "web")) return ORBIT_SOURCE_WEB;
     if (!strcmp(id, "gofile")) return ORBIT_SOURCE_GOFILE;
     if (!strcmp(id, "fuckingfast")) return ORBIT_SOURCE_FUCKINGFAST;
+    if (!strcmp(id, "rootz")) return ORBIT_SOURCE_ROOTZ;
     return 0;
 }
 
@@ -40,7 +41,8 @@ cJSON *sources_json_locked(void) {
     } providers[] = {{"vikingfile", "Vikingfile", true}, {"archive", "Archive.org", true},
                      {"akirabox", "AkiraBox", true}, {"datanodes", "DataNodes", true},
                      {"web", "Direct links", true}, {"gofile", "Gofile", true},
-                     {"fuckingfast", "FuckingFast", true}};
+                     {"fuckingfast", "FuckingFast", true},
+                     {"rootz", "Rootz", true}};
     cJSON *o = cJSON_CreateObject(), *enabled = cJSON_AddArrayToObject(o, "enabled"),
           *options = cJSON_AddArrayToObject(o, "options");
     bool acknowledged = orbit.sources.notice_version == ORBIT_SOURCE_NOTICE_VERSION &&

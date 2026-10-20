@@ -3,6 +3,7 @@
 #include "archive_account.h"
 #include "debrid.h"
 #include "extract.h"
+#include "hosts.h"
 #include <openssl/crypto.h>
 #include "provider_network.h"
 #include "transfer_writer.h"
@@ -226,7 +227,9 @@ static size_t headers(char *s, size_t a, size_t b, void *arg) {
         if (t->status == 200 && t->offset == 0 && t->limit == t->release->size &&
             t->length == t->release->size && !t->owner)
             t->accepted = true;
-        if (t->status == 206 && t->start == t->offset && t->total == t->release->size &&
+        /* A pasted link's name and size are read from the provider's response itself. */
+        const bool learn = t->capture_probe && t->release->local && t->release->size_pending;
+        if (t->status == 206 && t->start == t->offset && (t->total == t->release->size || (learn && t->total > 0)) &&
             t->end == t->limit - 1 && t->length == t->limit - t->offset)
             t->accepted = true;
         if ((t->accepted || (t->range_probe && t->status == 200)) &&
@@ -243,12 +246,13 @@ static size_t headers(char *s, size_t a, size_t b, void *arg) {
                       "Provider returned a page instead of a downloadable file.");
         }
         bool generated_provider = !strcmp(t->release->source, "akirabox") ||
-                                  !strcmp(t->release->source, "datanodes") || !strcmp(t->release->source, "1fichier");
+                                  !strcmp(t->release->source, "datanodes") || !strcmp(t->release->source, "1fichier") ||
+                                  !strcmp(t->release->source, "rootz");
         if ((t->capture_probe && generated_provider && t->accepted && !t->disposition[0])) {
             t->accepted = false;
             copy_text(t->error, sizeof t->error, "Provider did not identify the selected filename.");
         }
-        if ((t->capture_probe || torbox(t)) && t->accepted && t->disposition[0]) {
+        if ((t->capture_probe || torbox(t)) && t->accepted && t->disposition[0] && !learn) {
             if (!disposition_matches(t->disposition, t->release->filename)) {
                 t->accepted = false;
                 copy_text(t->error, sizeof t->error, "Provider returned a different filename.");
@@ -454,6 +458,7 @@ static int range_support(Transfer *owner, struct curl_slist *conditions, CURLcod
         if (owner->probe && guarded(owner)) {
             owner->status = probe.status;
             owner->length = probe.total;
+            copy_text(owner->disposition, sizeof owner->disposition, probe.disposition);
             copy_text(owner->etag, sizeof owner->etag, probe.etag);
             copy_text(owner->modified, sizeof owner->modified, probe.modified);
         }
@@ -485,6 +490,24 @@ int transfer_validate_capture(Release *release, atomic_bool *cancel, char *etag,
     if (!strong && (!owner.modified[0] || curl_getdate(owner.modified, NULL) < 0)) {
         copy_text(error, cap, "The provider did not supply a stable file identity. Nothing was queued.");
         return -1;
+    }
+    if (release->local && release->size_pending) {
+        /* Adopt what the provider's own response says, then hold it to the same route rules. */
+        char raw[512], clean[sizeof release->filename];
+        if (owner.length < 1 || !disposition_filename(owner.disposition, raw, sizeof raw) ||
+            !filename_sanitize(raw, clean, sizeof clean)) {
+            copy_text(error, cap, "The provider did not name the file in a way Orbit can save safely. Nothing was queued.");
+            return -1;
+        }
+        release->size = owner.length;
+        release->size_pending = false;
+        copy_text(release->filename, sizeof release->filename, clean);
+        copy_text(release->title, sizeof release->title, clean);
+        release_classify_local(release);
+        if (!provider_capture_url(release, release->url)) {
+            copy_text(error, cap, "Captured link does not match the file the provider named. Nothing was queued.");
+            return -1;
+        }
     }
     copy_text(etag, 256, strong ? owner.etag : "");
     copy_text(modified, 128, owner.modified);

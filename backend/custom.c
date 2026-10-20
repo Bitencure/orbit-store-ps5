@@ -77,8 +77,9 @@ static void describe(cJSON *o, const Release *r, bool ranges, bool direct) {
     cJSON_AddBoolToObject(delivery, "torbox", torbox);
     cJSON_AddStringToObject(delivery, "torboxReason", torbox ? "" : why);
 }
-/* A link whose name and size only TorBox can tell us; it can be delivered no other way. */
-static void torbox_release(Release *r, const HostAdapter *host, const char *url) {
+/* A link whose real name and size only the provider can tell us: TorBox reports them for its delivery,
+ * the provider's own response does at capture for the browser flow. */
+static void pending_release(Release *r, const HostAdapter *host, const char *url) {
     char segment[512] = {0}, name[sizeof r->filename];
     memset(r, 0, sizeof *r);
     r->local = r->size_pending = true;
@@ -108,9 +109,24 @@ static cJSON *run_resolve(const Request *q) {
     const HostAdapter *host = host_for_url(url);
     if (!host) return state_json("error", "Paste a complete https:// link to a file.");
     if (host->kind == HOST_DISABLED) {
-        cJSON *o = state_json("unsupported", host->note);
+        char message[480];
+        copy_text(message, sizeof message, host->note);
+        int64_t size = 0;
+        int exists = -1;
+        /* FileDitch's open status endpoint can at least say whether the link is still alive. */
+        if (!strcmp(host->id, "fileditch")) {
+            exists = resolve_fileditch_status(url, &worker.cancel, &size);
+            double mb = (double)size / 1048576.0;
+            if (exists == 1)
+                snprintf(message, sizeof message, "FileDitch confirms this file exists (%.1f %s). %s", mb >= 1024 ? mb / 1024 : mb,
+                         mb >= 1024 ? "GB" : "MB", host->note);
+            else if (exists == 0) copy_text(message, sizeof message, "FileDitch says this file no longer exists.");
+        }
+        cJSON *o = state_json("unsupported", message);
         cJSON_AddStringToObject(o, "provider", host->id);
         cJSON_AddStringToObject(o, "providerLabel", host->label);
+        if (exists >= 0) cJSON_AddBoolToObject(o, "exists", exists == 1);
+        if (exists == 1) cJSON_AddNumberToObject(o, "sizeBytes", (double)size);
         return o;
     }
     pthread_mutex_lock(&orbit.mutex);
@@ -127,7 +143,7 @@ static cJSON *run_resolve(const Request *q) {
     if (host->kind == HOST_TORBOX) {
         Release t;
         char why[200] = {0};
-        torbox_release(&t, host, url);
+        pending_release(&t, host, url);
         pthread_mutex_lock(&orbit.mutex);
         bool ok = debrid_release_supported(&t, why, sizeof why);
         cJSON *o;
@@ -148,26 +164,19 @@ static cJSON *run_resolve(const Request *q) {
     if (browser && !strcmp(host->id, "vikingfile")) {
         if (resolve_viking(url, &worker.cancel, &res, error, sizeof error)) return state_json("error", error);
     } else if (browser) {
-        /* These pages show the name and size only to a person; Orbit verifies both when it
-         * captures the link, so a wrong entry fails safely instead of downloading the wrong file. */
+        /* These pages show the name and size only to a person. Without them, Orbit reads both from the
+         * provider's own response when the link is captured, and a wrong guess fails safely instead. */
         char clean[sizeof res.filename];
         if (!q->filename[0] || q->size < 1) {
             Release t;
-            char why[200] = {0};
-            torbox_release(&t, host, url);
+            pending_release(&t, host, url);
+            copy_text(t.browser_url, sizeof t.browser_url, url);
+            if (!provider_browser_supported(&t))
+                return state_json("error", "That is not a link Orbit can open on this provider. Check the address.");
             pthread_mutex_lock(&orbit.mutex);
-            bool tb = debrid_release_supported(&t, why, sizeof why);
-            if (tb) remember_locked(&t);
-            cJSON *o = state_json("needs-details", tb
-                ? "Download through TorBox now, or enter the exact file name and size shown on the provider page to use the PS5 browser."
-                : "Enter the exact file name and size in bytes shown on the provider page.");
-            provider_fields(o, host);
-            if (!tb) cJSON_AddBoolToObject(o, "torboxSetup", !debrid_connected_locked());
-            cJSON *delivery = cJSON_AddObjectToObject(o, "delivery");
-            cJSON_AddBoolToObject(delivery, "direct", false);
-            cJSON_AddBoolToObject(delivery, "torbox", tb);
-            cJSON_AddStringToObject(delivery, "torboxReason", tb ? "" : why);
-            if (tb) cJSON_AddStringToObject(o, "torboxReleaseId", t.id);
+            remember_locked(&t);
+            cJSON *o = state_json("needs-browser", "Open the provider page on your PS5 and complete any verification. Orbit reads the file name and size from the provider when its link is ready.");
+            describe(o, &t, false, true);
             pthread_mutex_unlock(&orbit.mutex);
             return o;
         }
@@ -352,6 +361,16 @@ static bool link_parse(const cJSON *e, Link *l, char *why, size_t cap) {
     const HostAdapter *h = host_for_url(url);
     if (!h) { copy_text(why, cap, "The url must be a complete https:// link."); return false; }
     if (h->kind == HOST_DISABLED) { copy_text(why, cap, h->note); return false; }
+    if (h->kind == HOST_BROWSER) {
+        /* A browser-assisted host needs its own page shape; say so now, not when the link is used. */
+        Release probe;
+        pending_release(&probe, h, url);
+        copy_text(probe.browser_url, sizeof probe.browser_url, url);
+        if (!provider_browser_supported(&probe)) {
+            copy_text(why, cap, "That is not a link Orbit can open on this provider.");
+            return false;
+        }
+    }
     copy_text(l->url, sizeof l->url, url);
     if (text_input(e, "titleId", l->title_id, sizeof l->title_id, false) || (l->title_id[0] && !pattern_title_id(l->title_id))) {
         copy_text(why, cap, "titleId must look like PPSA01234 or CUSA01234."); return false;

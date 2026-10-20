@@ -32,8 +32,7 @@ static const HostAdapter hosts[] = {
      "FileDitch file links are behind a Cloudflare human-verification challenge that Orbit cannot complete (observed 2026-10-20). Open the link in a browser instead."},
     {"fuckingfast", "FuckingFast", "fuckingfast1 fast", fast_domains, HOST_TORBOX, ORBIT_SOURCE_FUCKINGFAST,
      "FuckingFast needs a Cloudflare human-verification step that Orbit cannot complete. Use TorBox for FuckingFast links."},
-    {"rootz", "Rootz", "rootz1", rootz_domains, HOST_DISABLED, 0,
-     "Rootz is recognised, but no verifiable public download flow exists for it yet."},
+    {"rootz", "Rootz", "rootz1", rootz_domains, HOST_BROWSER, ORBIT_SOURCE_ROOTZ, ""},
     {"web", "Direct link", "http https direct", no_domains, HOST_WEB, ORBIT_SOURCE_WEB, ""},
 };
 
@@ -121,6 +120,12 @@ const HostAdapter *host_for_url(const char *url) {
 
 bool host_canonical_url(const char *url, char *out, size_t cap) {
     char name[256];
+    /* www.rootz.so serves the same share pages as rootz.so. */
+    if (host_url_ok(url, name, sizeof name) && !strcmp(name, "www.rootz.so")) {
+        static const char prefix[] = "https://www.rootz.so";
+        if (!strncmp(url, prefix, sizeof prefix - 1))
+            return snprintf(out, cap, "https://rootz.so%s", url + sizeof prefix - 1) < (int)cap;
+    }
     const HostAdapter *h = host_by_id("1fichier");
     if (!host_url_ok(url, name, sizeof name) || !host_domain_match(h, name)) return false;
     CURLU *u = curl_url();
