@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Checks build output against a SHA256SUMS file, and optionally rebuilds the committed tree to compare.
 #
-#   tools/fork/verify-build.sh dist-fork/1.3.5-custom.1/SHA256SUMS            # hash check only
-#   tools/fork/verify-build.sh dist-fork/1.3.5-custom.1/SHA256SUMS --rebuild  # also rebuild HEAD from scratch
+#   tools/fork/verify-build.sh dist-fork/1.3.5-custom.2/SHA256SUMS            # hash check only
+#   tools/fork/verify-build.sh dist-fork/1.3.5-custom.2/SHA256SUMS --rebuild  # also rebuild HEAD from scratch
 #
 # --rebuild exports HEAD with `git archive` (so no local edits, build output or caches can leak in), builds
 # the two ELFs in a temporary folder with tools/fork/build-ps5.sh --elf-only (Podman or Docker, network

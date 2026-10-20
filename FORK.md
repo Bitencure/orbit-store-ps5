@@ -83,7 +83,7 @@ re-run `tools/fork/host-build.sh build/orbit-live && python3 tests/live_hosts.py
 | Only existing features | either | either | upstream's |
 
 The fork service keeps upstream's version number (`1.3.5`) because upstream's apps compare it; the fork's own tag
-(`custom.1`) is reported as `forkTag` by `/api/v1/system`. The official native app 1.7.0 should keep working against
+(`custom.2`) is reported as `forkTag` by `/api/v1/system`. The official native app 1.7.0 should keep working against
 the fork service (the API only gained fields) but this was **not tried on a console**.
 
 **Orbit Zero** (the desktop app) cannot use pasted links: it talks to the console only about catalogue releases and

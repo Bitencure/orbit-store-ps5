@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { api } from "./api";
 import { Select } from "./Select";
+import { chooseDrive, destinationPath } from "./driveChoice";
 import {
   bytes,
   type Job,
@@ -133,12 +134,7 @@ export function AddLink({
       setSaved(links.links);
       // Same choice as a game's download page: the saved default drive, else an external drive, else the first.
       // An attached USB drive therefore wins over internal storage unless a default was set.
-      setDrive(
-        (current) =>
-          current ||
-          (storage.find((d) => d.id === system.preferredStorage) || storage.find((d) => d.external) || storage[0])?.id ||
-          "",
-      );
+      setDrive((current) => current || chooseDrive(storage, system.preferredStorage)?.id || "");
     } catch (e) {
       if (alive.current) setError((e as Error).message);
     }
@@ -237,9 +233,7 @@ export function AddLink({
   }));
   const chosen = drives.find((d) => d.id === drive);
   const fileName = (name || reply?.filename || "").trim();
-  const destination = chosen
-    ? `${chosen.path}/${reply?.sizePending && !wantsTorbox ? "" : fileName}`
-    : "";
+  const destination = destinationPath(chosen, fileName, !!reply?.sizePending && !wantsTorbox);
   const queueLabel = wantsTorbox
     ? t("Download via TorBox")
     : reply?.state === "needs-browser"

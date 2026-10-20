@@ -7,6 +7,7 @@
 # Limits: this is the host build, so PS5-only code (notification, browser launch, memory reads,
 # ShadowMount calls) is not exercised; docs/SANDBOX-AUDIT.md covers those by reading the code.
 # Needs: bwrap, cc, python3, and tools/fork/host-build.sh build/orbit-sandbox-test.
+# Optional arguments are test names for tests/custom_integration.py (default: all).
 set -euo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd)
 cd "$root"
@@ -23,7 +24,7 @@ exec bwrap --ro-bind / / --dev /dev --proc /proc --bind "\$STATE" "\$STATE" --bi
   "$root/build/orbit-sandbox-test" "\${ARGS[@]}"
 RUN
 chmod +x "$work/run.sh"
-ORBIT_SANDBOX_AUDIT=1 ORBIT_TEST_BIN="$work/run.sh" python3 tests/custom_integration.py
+ORBIT_SANDBOX_AUDIT=1 ORBIT_TEST_BIN="$work/run.sh" python3 tests/custom_integration.py "$@"
 python3 -I - "$work/writes.log" <<'PY'
 import collections, re, sys
 rows = [line.rstrip('\n').split('\t') for line in open(sys.argv[1])]

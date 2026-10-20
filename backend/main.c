@@ -254,6 +254,9 @@ int main(int argc, char **argv) {
     archive_account_load();
     receive_start();
     zero_probe_start();
+    /* Before the web server: a request in the gap would otherwise see no saved links. */
+    if (custom_start())
+        puts("Saved links could not be read; the server remains available.");
     startup_result = api_start();
     diagnostics_stage("listener", startup_result ? "error" : "ok", startup_result);
     if (startup_result) {
@@ -319,9 +322,6 @@ int main(int argc, char **argv) {
     diagnostics_stage("browser", "started", 0);
     startup_result = browser_start();
     diagnostics_stage("browser", startup_result ? "error" : "ok", startup_result);
-    startup_result = custom_start();
-    if (startup_result)
-        puts("Saved links could not be read; the server remains available.");
     diagnostics_stage("library", "started", 0);
     startup_result = library_start();
     diagnostics_stage("library", startup_result ? "error" : "ok", startup_result);

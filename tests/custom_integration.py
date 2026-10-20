@@ -313,7 +313,7 @@ class Service:
         self.storage.mkdir(exist_ok=True)
         self.origin, self.port, self.token, self.process = origin, free_port(), None, None
 
-    def start(self, extra_env=None):
+    def start(self, extra_env=None, on_up=None):
         # A restart keeps the environment the service was first started with (a test of recovery must not change the layout).
         if extra_env is not None:
             self.extra_env = dict(extra_env)
@@ -335,12 +335,14 @@ class Service:
         if code is None:
             raise RuntimeError('service did not start: ' + ''.join(lines))
         threading.Thread(target=lambda: [None for _ in self.process.stdout], daemon=True).start()
-        for _ in range(100):
+        for _ in range(100 if on_up is None else 4000):
             try:
                 if self.call('GET', '/api/v1/system', auth=False)[0] == 200:
+                    if on_up:
+                        on_up()  # the first instant the service answers
                     break
             except OSError:
-                time.sleep(0.1)
+                time.sleep(0.1 if on_up is None else 0.005)
         if not self.token:
             status, body = self.call('POST', '/api/v1/pair', {'code': code}, auth=False)
             assert status == 200, body
@@ -787,6 +789,19 @@ class Persistence(Base):
         restored = self.service.job(body['id'])
         self.assertIsNotNone(restored, 'the queued pasted link must reload')
         self.assertEqual((restored['filename'], restored['sourceId'], restored['origin']), ('persist-queued.bin', 'web', 'local'))
+        self.service.call('POST', '/api/v1/custom/catalog', {'action': 'clear'})
+
+    def test_saved_links_are_there_the_moment_the_service_answers(self):
+        # custom_start() used to run after the web server started, so a request in that gap saw no saved links.
+        self.service.call('POST', '/api/v1/custom/catalog', {'action': 'import', 'entries': [
+            {'title': 'Early', 'url': 'https://downloads.example.org/early.bin'}]})
+        for attempt in range(10):
+            self.service.stop()
+            first = []
+            self.service.start(on_up=lambda: first.append(self.service.call('GET', '/api/v1/custom/catalog')))
+            status, body = first[0]
+            self.assertEqual(status, 200, body)
+            self.assertIn('Early', [l['title'] for l in body['links']], f'saved links missing on restart {attempt}')
         self.service.call('POST', '/api/v1/custom/catalog', {'action': 'clear'})
 
     def test_tampered_queue_cannot_escape_the_download_folder(self):
