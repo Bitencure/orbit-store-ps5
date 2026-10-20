@@ -232,7 +232,8 @@ def free_port():
 
 
 class Service:
-    def __init__(self, root, origin):
+    def __init__(self, root, origin, binary=None):
+        self.binary = binary or BIN
         self.root = pathlib.Path(root)
         self.state, self.storage = self.root / 'state', self.root / 'storage'
         self.state.mkdir(exist_ok=True)
@@ -244,7 +245,7 @@ class Service:
                    ORBIT_TEST_FILEDITCH_API='http://127.0.0.1:1/api')
         env.update(extra_env or {})
         self.process = subprocess.Popen(
-            [str(BIN), '--state', str(self.state), '--storage', str(self.storage), '--port', str(self.port)],
+            [str(self.binary), '--state', str(self.state), '--storage', str(self.storage), '--port', str(self.port)],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
         code, lines = None, []
         deadline = time.time() + 20
@@ -1148,6 +1149,33 @@ class Sandbox(unittest.TestCase):
     def test_sandbox_build_uses_its_own_port_and_says_so(self):
         port, system = self.run_without_port(SANDBOX_BIN)
         self.assertEqual((port, system.get('sandbox'), system['httpPort']), (34178, True, 34178))
+
+    def stop_from_page(self, binary):
+        origin = Origin()
+        tmp = tempfile.TemporaryDirectory()
+        service = Service(tmp.name, origin, binary)
+        try:
+            service.start()
+            status, body = service.call('POST', '/api/v1/updates', {'action': 'stop', 'confirmed': True})
+            exited = None
+            for _ in range(150):
+                exited = service.process.poll()
+                if exited is not None:
+                    break
+                time.sleep(0.1)
+            return status, exited
+        finally:
+            service.stop()
+            origin.shutdown()
+            tmp.cleanup()
+
+    def test_sandbox_build_can_be_stopped_from_its_own_page(self):
+        status, exited = self.stop_from_page(SANDBOX_BIN)
+        self.assertEqual((status, exited), (202, 0))
+
+    def test_normal_test_build_still_refuses_stop_without_an_updater(self):
+        status, exited = self.stop_from_page(BIN)
+        self.assertEqual((status, exited), (409, None))
 
     def test_normal_build_keeps_the_original_port_and_is_not_a_sandbox(self):
         port, system = self.run_without_port(BIN)

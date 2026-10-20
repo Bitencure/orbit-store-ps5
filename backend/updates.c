@@ -39,6 +39,14 @@ static bool available(void) {
     return orbit.autoboot && !orbit.desktop;
 #endif
 }
+/* The sandbox build has no updater but must still be stoppable from its own page. */
+static bool sandbox_build(void) {
+#ifdef ORBIT_SANDBOX
+    return true;
+#else
+    return false;
+#endif
+}
 static bool interrupted(void) {
     pthread_mutex_lock(&update.mutex);
     bool stop = update.stop;
@@ -383,7 +391,7 @@ int updates_action(const cJSON *input, char *error, size_t cap) {
     } else if (!checking && !installing && !stopping) {
         code = 400;
         copy_text(error, cap, "Unknown update action.");
-    } else if (!available() || !update.started) {
+    } else if (!(available() || (stopping && sandbox_build())) || !update.started) {
         code = 409;
         copy_text(error, cap, "Updates are available from Orbit running on your PS5.");
     } else if (automatic && !update.stop &&
