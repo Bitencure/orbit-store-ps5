@@ -61,6 +61,17 @@ export function BrowserNotice({
           {session.title ? ` · ${session.title}` : ""}
         </strong>
         <p>{t(session.message)}</p>
+        {session.lastRejection && session.active && (
+          <p className="fine">
+            {t("Orbit found a link but could not use it:")} {t(session.lastRejection)}{" "}
+            {t("If you already pressed the provider's Download button, the link may have been used up. Do not press it again; wait for a fresh link.")}
+          </p>
+        )}
+        {session.state === "failed" && (
+          <p className="fine">
+            {t("You can also finish the steps in your computer's browser and paste the link under Add a download link.")}
+          </p>
+        )}
         {error?.id === session.id && <p role="alert">{error.message}</p>}
       </div>
       <div className="update-notice-actions">

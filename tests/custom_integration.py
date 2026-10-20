@@ -1171,6 +1171,100 @@ class LearnedCaptureHostileName(LearnedCapture):
         self.assertFalse((self.service.storage.parent / 'evil-name.bin').exists())
 
 
+class ManualLink(Base):
+    """The fallback for when the PS5 browser cannot be used: the person finishes the provider's steps on their own computer
+    and pastes the link from the Download button. It must be held to every check a link read from the browser gets."""
+    sources = ('1fichier', 'vikingfile')
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.origin = Origin()
+        cls.service = Service(cls.tmp.name, cls.origin)
+        # The simulated capture URL is deliberately useless, to prove the pasted link is what gets used.
+        cls.service.start({'ORBIT_TEST_CAPTURE_URL': cls.origin.base + '/dl/nameless.bin',
+                           'ORBIT_TEST_VIKING_API': cls.origin.base + '/viking/check-file'})
+        cls.service.enable(*cls.sources)
+
+    def paste(self, page, path, **extra):
+        reply = self.service.resolve(page)
+        self.assertEqual(reply['state'], 'needs-browser', reply)
+        link = path if '://' in path or ' ' in path else self.origin.base + path
+        status, body = self.service.call('POST', '/api/v1/browser', {
+            'action': 'start', 'releaseId': reply['releaseId'], 'storageId': self.service.storage_id(), 'link': link, **extra})
+        if status != 202:
+            return status, body, None
+        deadline, state = time.time() + 60, {}
+        while time.time() < deadline:
+            state = self.service.call('GET', '/api/v1/browser')[1]
+            if state['state'] in ('queued', 'failed', 'cancelled'):
+                break
+            time.sleep(0.2)
+        return status, body, state
+
+    def test_a_pasted_link_is_checked_and_queued_with_the_name_the_provider_gives(self):
+        status, _, state = self.paste('https://1fichier.com/?abcdefghij0123456789', '/dl/learned.bin')
+        self.assertEqual((status, state['state']), (202, 'queued'), state)
+        job = self.service.wait_job(state['jobId'], {'complete', 'error'}, 90)
+        self.assertEqual((job['status'], job['filename'], job['total']), ('complete', 'learned-name.bin', len(DATA)), job)
+        self.assertEqual(sha256_file(job['path']), hashlib.sha256(DATA).hexdigest())
+        self.assertEqual((job['sourceId'], job['origin']), ('1fichier', 'local'))
+
+    def test_a_pasted_link_for_a_listed_file_must_match_the_listing(self):
+        _, _, state = self.paste('https://vikingfile.com/f/abcdefghij', '/file.bin')
+        self.assertEqual(state['state'], 'queued', state)
+        job = self.service.wait_job(state['jobId'], {'complete', 'error'}, 90)
+        self.assertEqual(job['status'], 'complete', job)
+        pathlib.Path(job['path']).unlink()  # the listing always names the same file; free the name for the next attempt
+        before = len(self.service.jobs())
+        _, _, state = self.paste('https://vikingfile.com/f/abcdefghik', '/short.bin')  # 500,000 bytes, the listing says 1 MiB
+        self.assertEqual(state['state'], 'failed', state)
+        self.assertEqual(len(self.service.jobs()), before, 'a link that does not fit the listing must queue nothing')
+
+    def test_a_link_that_is_not_a_download_link_is_refused_with_a_reason(self):
+        before = len(self.service.jobs())
+        for link in ('https://evil.example/file.bin', 'http://example.com/x', 'ftp://127.0.0.1/file.bin', 'not a link'):
+            _, _, state = self.paste('https://1fichier.com/?abcdefghij0123456789', link)
+            self.assertEqual(state['state'], 'failed', (link, state))
+            self.assertIn('not a download link', state['message'], (link, state))
+        self.assertEqual(len(self.service.jobs()), before)
+
+    def test_a_dead_or_html_link_queues_nothing(self):
+        before = len(self.service.jobs())
+        for path in ('/missing', '/gone', '/html'):
+            _, _, state = self.paste('https://1fichier.com/?abcdefghij0123456789', path)
+            self.assertEqual(state['state'], 'failed', (path, state))
+        self.assertEqual(len(self.service.jobs()), before)
+
+    def test_the_pasted_link_is_never_reported_back(self):
+        token = 'SECRETTOKEN0123456789'
+        status, body, state = self.paste('https://1fichier.com/?abcdefghij0123456789', f'/dl/learned.bin?sig={token}')
+        self.assertEqual(status, 202, body)
+        for text in (json.dumps(state), json.dumps(self.service.call('GET', '/api/v1/browser')[1]), json.dumps(self.service.jobs()),
+                     json.dumps(self.service.call('GET', '/api/v1/system')[1])):
+            self.assertNotIn(token, text)
+        state_file = (self.service.state / 'state.json').read_text()
+        self.assertNotIn(token, state_file)
+
+    def test_bad_requests_are_rejected_before_anything_starts(self):
+        reply = self.service.resolve('https://1fichier.com/?abcdefghij0123456789')
+        base = {'action': 'start', 'releaseId': reply['releaseId'], 'storageId': self.service.storage_id()}
+        for extra in ({'link': 5}, {'link': ''}, {'link': 'x' * 3000}, {'link': self.origin.base + '/file.bin', 'nativeDialog': True,
+                      'returnTarget': 'native', 'clientId': 'abc'}):
+            status, body = self.service.call('POST', '/api/v1/browser', {**base, **extra})
+            self.assertEqual(status, 400, (extra.keys(), body))
+        status, body = self.service.call('POST', '/api/v1/browser', {'action': 'refresh', 'jobId': 'x', 'link': self.origin.base + '/file.bin'})
+        self.assertEqual(status, 400, body)
+        self.assertFalse(self.service.call('GET', '/api/v1/browser')[1]['active'])
+
+    def test_counters_are_reported_without_any_link(self):
+        _, _, state = self.paste('https://1fichier.com/?abcdefghij0123456789', '/dl/learned.bin')
+        timing = state['timing']
+        for key in ('scannedBytes', 'readableBytes', 'readFailures', 'passes', 'rejected', 'candidates', 'browserProcesses'):
+            self.assertIn(key, timing)
+        self.assertEqual(timing['candidates'], 1)
+
+
 class VikingPastedLinks(Base):
     sources = ('vikingfile',)
 

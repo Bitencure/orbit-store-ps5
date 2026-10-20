@@ -3178,3 +3178,9 @@ html.pointer .debrid-settings input:focus {
 .add-link-import { display: grid; gap: .8rem; }
 .add-link-problems { color: var(--text-2); font-size: .85rem; padding-left: 1.2rem; }
 .add-link-modal { width: min(50rem, 94vw); }
+.add-link-destination { display: flex; flex-wrap: wrap; gap: 0.5em; align-items: baseline; margin: 0.25em 0 0; font-size: 0.9em; }
+.add-link-destination code { overflow-wrap: anywhere; }
+.add-link-own-browser { margin-top: 1em; }
+.add-link-own-browser summary { cursor: pointer; }
+.add-link-own-browser label { display: block; margin: 0.75em 0 0; }
+.add-link-own-browser input { width: 100%; box-sizing: border-box; }

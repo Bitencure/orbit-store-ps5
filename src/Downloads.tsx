@@ -580,6 +580,12 @@ export function Downloads({
                       <code dir="ltr">{j.path}</code>
                     </p>
                   )}
+                  {j.status !== "complete" && j.status !== "cancelled" && j.path && (
+                    <p className="download-location">
+                      <span>{t("Saving to")}</span>
+                      <code dir="ltr">{j.path}</code>
+                    </p>
+                  )}
                   <div className="queue-actions">
                     {j.canEnterArchivePassword && <button disabled={!!busy || !drive} onClick={() => {
                       setArchivePassword(""); setError(""); setPasswordJob(j);

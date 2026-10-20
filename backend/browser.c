@@ -6,6 +6,7 @@
 #if defined(ORBIT_TEST) || defined(ORBIT_LIVE_VERIFY)
 #define ORBIT_SIMULATED_CAPTURE 1
 #endif
+#include <openssl/crypto.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -23,8 +24,12 @@ static struct {
     Storage storage;
     Job refresh_job;
     int64_t started_ms, capture_ms, link_ms, validation_ms, queued_ms, finished_ms;
-    uint64_t scanned_bytes;
-    unsigned candidates, browser_processes;
+    uint64_t scanned_bytes, readable_bytes;
+    unsigned candidates, browser_processes, read_failures, passes, rejected;
+    /* Counters and one short reason, never a link: why the last link Orbit found was not used. */
+    char last_rejection[160];
+    /* A link the person copied from their own browser. Held only until the worker takes it; never reported. */
+    char manual_link[2048];
 } session = {.changed = PTHREAD_COND_INITIALIZER};
 
 static int64_t milliseconds(void) {
@@ -49,6 +54,15 @@ static void state_locked(const char *state, const char *message) {
     copy_text(session.state, sizeof session.state, state);
     copy_text(session.message, sizeof session.message, message);
 }
+/* Remember why a found link was refused. The reasons are Orbit's own fixed sentences; if one ever carried an address,
+ * say only that the link failed the checks. */
+#ifndef ORBIT_SIMULATED_CAPTURE /* only the memory scan finds links that can be refused */
+static void remember_rejection_locked(const char *reason) {
+    session.rejected++;
+    copy_text(session.last_rejection, sizeof session.last_rejection,
+              reason && *reason && !strstr(reason, "://") ? reason : "The link did not pass Orbit's checks.");
+}
+#endif
 static bool selected_locked(void) {
     if (session.refresh_job.id[0]) {
         const Job *j = job_find(session.refresh_job.id), *p = &session.refresh_job;
@@ -89,6 +103,29 @@ static bool native_active(void *context) {
 #endif
 static bool capture(Release *r, char *etag, char *modified, bool *validated, char *error, size_t cap) {
     *validated = false;
+    /* The person finished the provider's steps in their own browser and pasted the link from its Download button. It gets
+     * exactly the checks a link read from the PS5 browser gets: the provider's route shape, the host allowlist, the
+     * address guard, and the file's own name, size and validators. Nothing is scanned and no browser is opened. */
+    char manual[sizeof session.manual_link];
+    pthread_mutex_lock(&orbit.mutex);
+    copy_text(manual, sizeof manual, session.manual_link);
+    OPENSSL_cleanse(session.manual_link, sizeof session.manual_link);
+    pthread_mutex_unlock(&orbit.mutex);
+    if (manual[0]) {
+        bool shaped = active() && provider_capture_url(r, manual);
+        if (shaped) {
+            copy_text(r->url, sizeof r->url, manual);
+            pthread_mutex_lock(&orbit.mutex);
+            session.capture_ms = session.link_ms = milliseconds() - session.started_ms;
+            session.candidates++;
+            pthread_mutex_unlock(&orbit.mutex);
+        } else if (active()) {
+            copy_text(error, cap, "That is not a download link this provider hands out. Copy it from the provider's Download button, "
+                                  "or from your browser's download list, after finishing the check.");
+        }
+        OPENSSL_cleanse(manual, sizeof manual);
+        return shaped;
+    }
     /* Native owns the dialog. Do not scan an old browser before it confirms
      * opening this exact session. An abandoned prepare expires in 30 seconds. */
     if (session.native_dialog) {
@@ -174,6 +211,7 @@ static bool capture(Release *r, char *etag, char *modified, bool *validated, cha
         const uint64_t before = reader.attempted;
         for (int i = 0; i < count && active() && reader.remaining; ++i) {
             reader.context = &targets[i];
+            const uint64_t cursor_before = targets[i].cursor;
             /* Share one read/time budget fairly. An older ShellUI browser must
              * not hide or delay the current native dialog's network process. */
             ProbeResult result = probe_target_scan_slice(&targets[i], &reader,
@@ -181,7 +219,10 @@ static bool capture(Release *r, char *etag, char *modified, bool *validated, cha
                 PROBE_SCAN_SLICE);
             pthread_mutex_lock(&orbit.mutex);
             session.scanned_bytes = reader.attempted;
+            session.readable_bytes = reader.readable;
+            session.read_failures = reader.failures;
             session.browser_processes = count;
+            if (cursor_before && !targets[i].cursor && result == PROBE_ABSENT) session.passes++;
             if (result == PROBE_FOUND) {
                 session.link_ms = milliseconds() - session.started_ms;
                 session.candidates++;
@@ -213,6 +254,9 @@ static bool capture(Release *r, char *etag, char *modified, bool *validated, cha
                     pthread_mutex_lock(&orbit.mutex);
                     if (!session.stop && !atomic_load(&session.cancel))
                         state_locked("waiting-link", "Waiting for a fresh download link from the provider…");
+                    pthread_mutex_unlock(&orbit.mutex);
+                    pthread_mutex_lock(&orbit.mutex);
+                    remember_rejection_locked(error);
                     pthread_mutex_unlock(&orbit.mutex);
                     copy_text(rejected[match.rejected_count++], sizeof rejected[0], match.url);
                     match.url[0] = 0;
@@ -246,6 +290,8 @@ static void *worker(void *unused) {
         Release resolved = session.release;
         if (session.native_dialog && !session.dialog_opened)
             state_locked("opening", "Opening the download page in Orbit…");
+        else if (session.manual_link[0])
+            state_locked("validating", "Checking the link you pasted against the provider's rules…");
         else if (!strcmp(resolved.source, "akirabox") || !strcmp(resolved.source, "vikingfile"))
             state_locked("waiting-link", "Complete verification if shown, then wait. Orbit will check the generated download link automatically.");
         else
@@ -357,7 +403,14 @@ cJSON *browser_status(void) {
         cJSON_AddNumberToObject(timing, "scannedBytes", (double)session.scanned_bytes);
         cJSON_AddNumberToObject(timing, "candidates", session.candidates);
         cJSON_AddNumberToObject(timing, "browserProcesses", session.browser_processes);
+        /* How far the scan got, as counts only: bytes actually read, reads that failed, and completed passes over
+         * the browser's memory. Together with "candidates" this separates "nothing seen" from "seen and refused". */
+        cJSON_AddNumberToObject(timing, "readableBytes", (double)session.readable_bytes);
+        cJSON_AddNumberToObject(timing, "readFailures", session.read_failures);
+        cJSON_AddNumberToObject(timing, "passes", session.passes);
+        cJSON_AddNumberToObject(timing, "rejected", session.rejected);
     }
+    if (session.rejected) cJSON_AddStringToObject(o, "lastRejection", session.last_rejection);
     pthread_mutex_unlock(&orbit.mutex);
     return o;
 }
@@ -400,7 +453,13 @@ int browser_action(const cJSON *input, char *error, size_t cap) {
             goto done;
         }
         const cJSON *dialog = cJSON_GetObjectItemCaseSensitive(input, "nativeDialog");
+        const cJSON *link = cJSON_GetObjectItemCaseSensitive(input, "link");
         const char *client = json_text(input, "clientId");
+        if (link && (!cJSON_IsString(link) || !*link->valuestring || strlen(link->valuestring) >= sizeof session.manual_link ||
+                     strcmp(action, "start") || cJSON_IsTrue(dialog))) {
+            copy_text(error, cap, "A pasted link needs a supported provider option and no PS5 dialog."); code = 400;
+            goto done;
+        }
         if ((dialog && !cJSON_IsBool(dialog)) || (cJSON_IsTrue(dialog) &&
             (!target || strcmp(target->valuestring, "native") || !*client || strlen(client) > 64 ||
              strspn(client, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_") != strlen(client)))) {
@@ -442,8 +501,11 @@ int browser_action(const cJSON *input, char *error, size_t cap) {
             session.started_ms = milliseconds();
             session.capture_ms = session.link_ms = session.validation_ms = 0;
             session.queued_ms = session.finished_ms = 0;
-            session.scanned_bytes = 0;
-            session.candidates = session.browser_processes = 0;
+            session.scanned_bytes = session.readable_bytes = 0;
+            session.candidates = session.browser_processes = session.read_failures = session.passes = session.rejected = 0;
+            session.last_rejection[0] = 0;
+            OPENSSL_cleanse(session.manual_link, sizeof session.manual_link);
+            copy_text(session.manual_link, sizeof session.manual_link, link ? link->valuestring : "");
             session.busy = session.pending = true;
             atomic_store(&session.cancel, false);
             state_locked("opening", "Opening the download page on your PS5…");

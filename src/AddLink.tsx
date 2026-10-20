@@ -106,6 +106,7 @@ export function AddLink({
     [size, setSize] = useState(""),
     [drives, setDrives] = useState<Storage[]>([]),
     [drive, setDrive] = useState(""),
+    [pasted, setPasted] = useState(""),
     [delivery, setDelivery] = useState<"direct" | "torbox">("direct"),
     [sources, setSources] = useState<SourceSettings | null>(null),
     [saved, setSaved] = useState<SavedLink[]>([]),
@@ -120,16 +121,24 @@ export function AddLink({
   }, []);
   const load = useCallback(async () => {
     try {
-      const [storage, source, links] = await Promise.all([
+      const [storage, source, links, system] = await Promise.all([
         api<Storage[]>("/storage"),
         api<SourceSettings>("/sources"),
         api<{ links: SavedLink[] }>("/custom/catalog"),
+        api<{ preferredStorage?: string }>("/system"),
       ]);
       if (!alive.current) return;
       setDrives(storage);
       setSources(source);
       setSaved(links.links);
-      setDrive((current) => current || storage[0]?.id || "");
+      // Same choice as a game's download page: the saved default drive, else an external drive, else the first.
+      // An attached USB drive therefore wins over internal storage unless a default was set.
+      setDrive(
+        (current) =>
+          current ||
+          (storage.find((d) => d.id === system.preferredStorage) || storage.find((d) => d.external) || storage[0])?.id ||
+          "",
+      );
     } catch (e) {
       if (alive.current) setError((e as Error).message);
     }
@@ -191,6 +200,22 @@ export function AddLink({
       if (alive.current) setWorking(false);
     }
   }
+  // The person finished the provider's steps in their own browser and copied the link from its Download button.
+  // The service checks it exactly like a link read from the PS5 browser; nothing is added if it does not fit.
+  async function useOwnLink() {
+    if (!reply?.releaseId || !drive || !pasted.trim()) return;
+    setWorking(true);
+    setError("");
+    try {
+      await api("/browser", { action: "start", releaseId: reply.releaseId, storageId: drive, link: pasted.trim(), returnToOrbit: false });
+      setPasted("");
+      onQueued?.(undefined);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      if (alive.current) setWorking(false);
+    }
+  }
   async function manageSaved(body: Record<string, unknown>) {
     setError("");
     try {
@@ -210,6 +235,11 @@ export function AddLink({
     label: `${placeName(d.label)} · ${t("{size} free", { size: bytes(d.freeBytes) })}`,
     disabled: size_ > 0 && d.projectedFreeBytes < size_,
   }));
+  const chosen = drives.find((d) => d.id === drive);
+  const fileName = (name || reply?.filename || "").trim();
+  const destination = chosen
+    ? `${chosen.path}/${reply?.sizePending && !wantsTorbox ? "" : fileName}`
+    : "";
   const queueLabel = wantsTorbox
     ? t("Download via TorBox")
     : reply?.state === "needs-browser"
@@ -348,12 +378,50 @@ export function AddLink({
           {needTorboxDrive && (
             <Select label={t("Save to")} value={drive} options={options} onChange={setDrive} disabled={working || !options.length} />
           )}
+          {needTorboxDrive && destination && (
+            <p className="add-link-destination">
+              <span>{reply.sizePending && !wantsTorbox ? t("Saves into") : t("Saves to")}</span>
+              <code dir="ltr">{destination}</code>
+            </p>
+          )}
           {!drives.length && <p className="fine">{t("No writable storage connected")}</p>}
           <div className="actions">
             <button className="primary" disabled={working || !drive || !reply.releaseId} onClick={() => void queue()}>
               {queueLabel}
             </button>
           </div>
+          {reply.state === "needs-browser" && !wantsTorbox && (
+            <details className="add-link-own-browser">
+              <summary>{t("Can't finish it on the PS5? Use your computer instead")}</summary>
+              <ol className="fine">
+                <li>{t("Open the file's page in your computer's browser and finish the provider's check.")}</li>
+                <li>
+                  {t("Copy the Download button's link address (right-click it), or the link from your browser's download list.")}
+                </li>
+                <li>{t("Paste it below. Orbit checks it like any other link before adding the file.")}</li>
+              </ol>
+              <label>
+                {t("Link from your computer's browser")}
+                <input
+                  type="text"
+                  inputMode="url"
+                  autoCapitalize="off"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  maxLength={2000}
+                  placeholder="https://"
+                  value={pasted}
+                  onChange={(e) => setPasted(e.target.value)}
+                  disabled={working}
+                />
+              </label>
+              <div className="actions">
+                <button disabled={working || !drive || !pasted.trim()} onClick={() => void useOwnLink()}>
+                  {t("Check and add this link")}
+                </button>
+              </div>
+            </details>
+          )}
         </div>
       )}
 

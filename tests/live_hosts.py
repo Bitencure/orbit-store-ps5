@@ -143,12 +143,10 @@ def main():
             if uuid:
                 # What a person's browser reveals after pressing Download on the page, taken from Rootz's documented API.
                 cdn = json.loads(fetch(f'https://rootz.so/api/files/download/{uuid}'))['data']['url']
-                service.stop()
-                service.start({'ORBIT_TEST_CAPTURE_URL': cdn})
-                service.enable('web', 'vikingfile', 'gofile', 'rootz')
+                # Fed through the pasted-link route, as a person would after copying it from their own browser.
                 reply = service.resolve(page, timeout=60)
                 status, body = service.call('POST', '/api/v1/browser', {'action': 'start', 'releaseId': reply['releaseId'],
-                                            'storageId': service.storage_id(), 'returnTarget': 'browser'})
+                                            'storageId': service.storage_id(), 'link': cdn})
                 state = {}
                 for _ in range(200):
                     state = service.call('GET', '/api/v1/browser')[1]
@@ -157,7 +155,7 @@ def main():
                     time.sleep(0.3)
                 job = service.wait_job(state['jobId'], {'complete', 'error'}, 120) if state['state'] == 'queued' else {'status': 'error', 'error': state.get('message', '')}
                 got = ci.sha256_file(job['path']) if job['status'] == 'complete' else job.get('error')
-                record('rootz', 'validates the real CDN link, learns its name and size, and downloads it byte-identical',
+                record('rootz', 'a pasted real CDN link is validated, its name and size learned, and the file downloads byte-identical',
                        job['status'] == 'complete' and got == hashlib.sha256(payload).hexdigest() if 'rootz' in uploads else job['status'] == 'complete',
                        f"{job['status']} name={job.get('filename')} sha256={str(got)[:16]}")
             else:

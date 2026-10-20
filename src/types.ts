@@ -290,6 +290,10 @@ export interface BrowserSession {
     | "cancelled";
   message: string;
   jobId: string;
+  // Fork: why the last link found in the PS5 browser was not used (a sentence, never an address).
+  lastRejection?: string;
+  // Counts only; they separate "nothing seen" from "seen and refused".
+  timing?: Record<string, number>;
 }
 
 // Fork: pasted links. The service checks a link, then the normal queue takes over.
