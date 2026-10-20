@@ -56,5 +56,5 @@ PY
   "$engine" run --rm -v "$PWD:/work:Z" -w /work/app orbit-app-build:0.1 bash tools/verify-package.sh
   cp app/dist/PPSA99177.ffpkg "$out/PPSA99177.ffpkg"
 fi
-(cd "$out" && sha256sum * | grep -v '^SHA256SUMS' > SHA256SUMS && cat SHA256SUMS)
+(cd "$out" && rm -f SHA256SUMS && sha256sum * > SHA256SUMS && cat SHA256SUMS)
 echo "Built $version ($tag) into $out. Nothing was installed or uploaded."
