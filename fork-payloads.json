@@ -1,0 +1,15 @@
+{
+  "name": "Orbit Store (unofficial fork)",
+  "payloads": [
+    {
+      "name": "Orbit Store (Beta, fork)",
+      "filename": "orbit_store.elf",
+      "url": "https://github.com/Bitencure/orbit-store-ps5/releases/download/v1.3.5-custom.1/orbit_store.elf",
+      "description": "Unofficial fork of Orbit Store with pasted links and extra hosts.",
+      "version": "v1.3.5",
+      "category": "Utilities",
+      "checksum": "20ed85ca1bafa6acba136a655f363e063ebb8aafd621929841ccf5b10a742de8",
+      "receiveProtocol": 1
+    }
+  ]
+}

@@ -3,7 +3,7 @@
 
 Runs the ORBIT_TEST service (loopback http only) against local mock origins. No real host
 is contacted and no game data is used: every file is a deterministic 1 MiB buffer.
-Run through `make test-custom`. This proves the software; it is not PS5 hardware testing."""
+Run: python3 tests/custom_integration.py (after tools/fork/host-build.sh). This proves the software; it is not PS5 hardware testing."""
 import hashlib
 import http.server
 import json
@@ -930,5 +930,5 @@ class VikingPastedLinks(Base):
 
 if __name__ == '__main__':
     if not BIN.exists():
-        sys.exit('Build first: make build/orbit-test (tools/fork/host-build.sh build/orbit-test)')
+        sys.exit('Build first: tools/fork/host-build.sh build/orbit-test')
     unittest.main(verbosity=2)

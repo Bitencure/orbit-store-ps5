@@ -6,7 +6,7 @@ API (or reuses a link you pass with --link), then asks a production-rules Orbit 
 it. The generic web adapter is also downloaded for real through Orbit's transfer code.
 Uploaded files are random bytes, not game data; they stay on the host until it expires them.
 
-    make live-verify
+    tools/fork/host-build.sh build/orbit-live
     python3 tests/live_hosts.py --yes                       # upload, resolve, report
     python3 tests/live_hosts.py --yes --only web,viking
     python3 tests/live_hosts.py --yes --link viking=https://vikingfile.com/f/XXXXXXXXXX
@@ -79,7 +79,7 @@ def main():
     if uploads and not args.yes:
         sys.exit('This uploads one random 1 KB file to: ' + ', '.join(uploads) + '. Re-run with --yes to allow it.')
     if not ci.BIN.exists():
-        sys.exit('Build first: make live-verify')
+        sys.exit('Build first: tools/fork/host-build.sh build/orbit-live')
 
     payload = os.urandom(1024)
     stem = f'orbit-fork-probe-{int(time.time())}'

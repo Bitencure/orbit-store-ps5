@@ -7,6 +7,12 @@
 #   tools/fork/build-ps5.sh --elf-only   # just the service/browser payload
 #   ENGINE=docker tools/fork/build-ps5.sh
 #
+# The TV app needs the ps5-opengl SDK. Upstream's download address (github.com/blackbearreloaded/
+# ps5-opengl, v1.0.0) returned 404 on 2026-10-20, but the release's source bundle ships the same
+# archive. Point ORBIT_SOURCE_BUNDLE at orbit-store-<version>-source-bundle.zip and it is unpacked
+# for you; app/tools/fetch-opengl-sdk.sh still verifies its SHA-256 before using it.
+#   ORBIT_SOURCE_BUNDLE=~/Downloads/orbit-store-1.3.5-source-bundle.zip tools/fork/build-ps5.sh
+#
 # Short image names (debian:trixie, ubuntu:24.04) need an unqualified registry. If Podman says
 # short-name resolution is enforced, point it at a config for this shell only:
 #   printf 'unqualified-search-registries=["docker.io"]\nshort-name-mode="permissive"\n' > /tmp/registries.conf
@@ -33,6 +39,15 @@ npm run build
 mkdir -p "$out"
 cp build/orbit_store.elf "$out/orbit_store.elf"
 if [ "${1:-}" != "--elf-only" ]; then
+  sdk=app/.deps/ps5-opengl/ps5-opengl-sdk-1.0.0.tar.gz
+  if [ ! -f "$sdk" ] && [ -n "${ORBIT_SOURCE_BUNDLE:-}" ]; then
+    mkdir -p app/.deps/ps5-opengl
+    python3 - "$ORBIT_SOURCE_BUNDLE" "$sdk" <<'PY'
+import shutil, sys, zipfile
+with zipfile.ZipFile(sys.argv[1]) as bundle, bundle.open('ps5-opengl-sdk-1.0.0.tar.gz') as source, open(sys.argv[2], 'wb') as out:
+    shutil.copyfileobj(source, out, 1 << 20)
+PY
+  fi
   "$engine" build -t orbit-app-build:0.1 app
   "$engine" run --rm -v "$PWD:/work:Z" -w /work/app -e BUILD_JOBS="${BUILD_JOBS:-4}" orbit-app-build:0.1 make ffpkg
   "$engine" run --rm -v "$PWD:/work:Z" -w /work/app orbit-app-build:0.1 bash tools/verify-package.sh

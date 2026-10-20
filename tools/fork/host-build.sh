@@ -2,7 +2,7 @@
 # Linux host build for this fork, without Docker. Builds the pinned static
 # libarchive and 7-Zip into .deps/ (gitignored) when missing, then runs make
 # with repo-local overrides so nothing is installed system-wide.
-# Usage: tools/fork/host-build.sh [make targets...]   (default: host build/orbit-test)
+# Usage: tools/fork/host-build.sh [make targets...]   (default: host build/orbit-test build/orbit-hosts-test)
 # Needs: a C/C++ compiler (clang), make, curl, 7z, python3, libcurl/libmicrohttpd/openssl dev files.
 set -euo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd)
@@ -36,7 +36,7 @@ fi
 [ -f build/generated/assets.h ] || { npm ci && npm run build; }
 [ -f build/generated/network.h ] || python3 tools/embed-launcher.py
 
-[ "$#" -gt 0 ] || set -- host build/orbit-test
+[ "$#" -gt 0 ] || set -- host build/orbit-test build/orbit-hosts-test
 exec make \
   CPPFLAGS="-D_FILE_OFFSET_BITS=64 -Ibackend -Ilauncher -I.deps/cjson -Ibuild/generated -I$prefix/include" \
   HOST_ARCHIVE_LIBS="-L$prefix/lib -l:libarchive.a -llzma -lbz2 -lz build/sevenzip-host.o -Wl,--whole-archive .deps/7zip-host/liborbit7zip.a -Wl,--no-whole-archive -lstdc++" \
