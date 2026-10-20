@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /* File-host adapter table and URL/filename helpers (fork). */
 #include "hosts.h"
 #include "orbit.h"

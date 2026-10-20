@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 #ifndef ORBIT_HOSTS_H
 #define ORBIT_HOSTS_H
 #include <stdbool.h>

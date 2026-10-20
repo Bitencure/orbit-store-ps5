@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """End-to-end tests for pasted-link downloads (fork).
 
 Runs the ORBIT_TEST service (loopback http only) against local mock origins. No real host

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Guarded link probe for user-added downloads (fork). One bounded request learns the
  * file's name, size, validators and Range support. HTML, errors and redirects to
  * hosts Orbit will not use are refused with a message that says what to do. */

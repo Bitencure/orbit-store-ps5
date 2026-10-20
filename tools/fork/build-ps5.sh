@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Builds this fork's PS5 payload (orbit_store.elf) and, unless --elf-only, the native TV app
 # (PPSA99177.ffpkg) with Podman or Docker, then writes SHA256SUMS next to them.
 # Follows BUILDING.md exactly; only the engine and the output folder are different.

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 #ifndef ORBIT_RESOLVE_H
 #define ORBIT_RESOLVE_H
 #include "hosts.h"

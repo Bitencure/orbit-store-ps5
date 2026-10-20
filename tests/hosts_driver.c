@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Unit tests for the fork's host table, URL checks and filename handling.
  * Built WITHOUT ORBIT_TEST so the production allowlists and the socket guard are what run. */
 #include "hosts.h"

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Write fork-payloads.json and fork-tv-app.json for the fork's own update feed.
 
 The in-app updater of this fork reads these two files from the fork's `dev` branch (never upstream's

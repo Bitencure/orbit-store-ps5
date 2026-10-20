@@ -4,6 +4,11 @@ An **unofficial, community fork** of [Orbit Store](https://github.com/saawant12/
 affiliated with or endorsed by the upstream project. Upstream copyright and attribution are kept and the code remains
 **GPL-3.0-or-later** (see `LICENSE`, `THIRD-PARTY-NOTICES.md`).
 
+**Licence and attribution.** Upstream's `LICENSE`, `THIRD-PARTY-NOTICES.md`, `licenses/` and every upstream file header are
+unchanged on `source` and `dev` (verified byte-identical to the release bundle). New files carry
+`SPDX-License-Identifier: GPL-3.0-or-later`. [`docs/upstream-bundle/`](docs/upstream-bundle/README.md) keeps upstream's list of
+the third-party source archives; a binary release of this fork must offer that corresponding source too.
+
 Branches: `main` mirrors upstream's docs and catalogue feeds · `source` holds unmodified upstream source bundles
 (`src-v1.3.5` = release v1.3.5, bundle sha256 `c0fe51d94b199daa77b620b5d596afc13b77902076db313891885d0e54339858`)
 · `dev` is that source plus this fork's changes (this branch).

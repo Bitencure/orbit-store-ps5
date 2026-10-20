@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Linux host build for this fork, without Docker. Builds the pinned static
 # libarchive and 7-Zip into .deps/ (gitignored) when missing, then runs make
 # with repo-local overrides so nothing is installed system-wide.

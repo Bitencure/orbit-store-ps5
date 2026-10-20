@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Fork: paste a link, let the service check it, then queue it like any other download.
 // Self-contained like the TorBox and Archive.org panels: it talks to the API itself, so the
 // Store dialog, the other looks' Settings page and a stopped download's "new link" prompt all use it.

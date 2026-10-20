@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Opt-in checks against REAL hosts (fork). Never part of `make test`.
 
 For each host this uploads one random 1 KB file through the host's documented anonymous upload

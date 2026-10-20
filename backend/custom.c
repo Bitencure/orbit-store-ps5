@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /* User-added links (fork): paste a URL, resolve it with a guarded probe, then queue it
  * through the normal download pipeline. Also holds the user's own link catalogue.
  * Nothing here is generated or fetched from a catalogue feed. */
