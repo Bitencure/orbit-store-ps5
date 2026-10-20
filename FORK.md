@@ -147,13 +147,23 @@ build I ran:
 - Native unit tests build with the host compiler: `app/tools/build-tests.sh` (needs `ninja` and `libwebp`; set
   `USE_CCACHE=0` without ccache). 180 tests pass (176 upstream's, 4 new).
 
-**Artifacts from my build** (commit `db23c3e`, Podman 6.1.4, 2026-10-20; nothing was installed or uploaded):
+**Artifacts from my build** (source tree of commit `db23c3e`, Podman 6.1.4, 2026-10-20; nothing was installed or uploaded):
 
 | File | Size | SHA-256 |
 |---|---|---|
 | `orbit_store.elf` | 42,575,016 | `2c5d33e60d0c4b908f0ab712e8c8018cde4b49cc63b5e5c37eb81a3003c555e4` |
 | `orbit_store_sandbox.elf` | 22,050,432 | `9ce87a6d72e466394296a6cdb0d2602669fdd794566cca25378a7e676165981c` |
 | `PPSA99177.ffpkg` | 114,294,784 | `ed8129c511d03c5ed0cf1fd0b98f0469972291993f5cfc1fdb253e2854eda5b2` |
+
+**Check them yourself.** `tools/fork/verify-build.sh dist-fork/1.3.5-custom.1/SHA256SUMS` checks the hashes; add `--rebuild` to
+export the committed tree with `git archive`, rebuild both ELFs from scratch in a temporary folder and compare. A later commit
+only changed docs, tests or `tools/fork/` scripts if `git diff --stat db23c3e..HEAD -- backend src app Makefile Dockerfile tools/build-deps.sh`
+is empty, which is why those hashes still describe the tip. One input is not pinned by this repo: `tools/bootstrap.py` downloads
+curl.se's *current* CA bundle (SHA-256 `a41b5d356aea97a529fe27e0f7316d2f9d946d75927476cf9cf1b90637d00505` in my build), which the ELF embeds.
+If curl.se publishes a newer one, a rebuild differs by that alone.
+
+What the sandbox can write, and the evidence: [docs/SANDBOX-AUDIT.md](docs/SANDBOX-AUDIT.md) (`tools/fork/audit-writes.sh` repeats the
+enforcement run).
 
 `app/tools/verify-package.sh` passed: the FFPKG carries exactly this ELF, its version marker, metadata, executable and
 translations match the build. The sandbox ELF is the service only (no embedded runtime, no icon code), and the data
@@ -207,7 +217,7 @@ Files this fork changed in upstream's tree, which are the only places a merge ca
 `backend/{api,browser,catalog,debrid,diagnostics,main,orbit,providers,queue,sources,state,transfer,tvapp,updates}.c|h`,
 `Makefile`, `Dockerfile`, `i18n/en.json`, `src/{App,Downloads,TvApp,components,types}.tsx|ts`, `src/interfaces/SettingsPage.tsx`,
 `src/styles.css`, and in the native app `main.cpp`, `orbit/{browser_handoff,screens}.hpp`, `orbit/settings*.cpp`,
-`preview_main.cpp`, `image_app_test.cpp`. Everything else is new (`backend/{hosts,resolve,custom}.c`, `src/AddLink.tsx`,
+`preview_main.cpp`, `image_app_test.cpp`. Everything else is new (`backend/{hosts,resolve,custom}.c`, `src/{AddLink,SandboxNotice}.tsx`,
 `tests/`, `tools/fork/`, `docs/`, this file).
 
 After a merge: rebuild, run `./build/orbit-hosts-test`, `python3 tests/custom_integration.py`, the native tests, rebuild the PS5 files, then

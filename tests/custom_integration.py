@@ -1173,10 +1173,12 @@ class Sandbox(unittest.TestCase):
         status, exited = self.stop_from_page(SANDBOX_BIN)
         self.assertEqual((status, exited), (202, 0))
 
+    @unittest.skipIf(os.environ.get('ORBIT_SANDBOX_AUDIT'), 'the audit runs everything through the sandbox binary')
     def test_normal_test_build_still_refuses_stop_without_an_updater(self):
         status, exited = self.stop_from_page(BIN)
         self.assertEqual((status, exited), (409, None))
 
+    @unittest.skipIf(os.environ.get('ORBIT_SANDBOX_AUDIT'), 'the audit runs everything through the sandbox binary')
     def test_normal_build_keeps_the_original_port_and_is_not_a_sandbox(self):
         port, system = self.run_without_port(BIN)
         self.assertEqual((port, system.get('sandbox'), system['httpPort']), (34177, None, 34177))
