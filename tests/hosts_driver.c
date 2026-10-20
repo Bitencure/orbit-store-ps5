@@ -63,6 +63,8 @@ int main(void) {
     CHECK_STR(id_of("https://fuckingfast.co/abc"), "fuckingfast");
     CHECK_STR(id_of("https://rootz.so/file/abc"), "rootz");
     CHECK_STR(id_of("https://downloads.example.org/a.bin"), "web");
+    /* Public archive.org files are ordinary direct links; the catalogue keeps its own login-aware source. */
+    CHECK_STR(id_of("https://archive.org/download/some-item/file.bin"), "web");
     /* Look-alikes must not inherit a named host's rules or toggle. */
     CHECK_STR(id_of("https://vikingfile.com.evil.example/f/abcdefghij"), "web");
     CHECK_STR(id_of("https://notvikingfile.com/f/abc"), "web");

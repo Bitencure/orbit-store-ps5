@@ -637,6 +637,13 @@ class LinkCatalogue(Base):
         self.assertEqual({l['title'] for l in body['links']}, {'Mine A', 'Gofile'})
         self.assertTrue(all(l['id'].startswith('link-') for l in body['links']))
 
+    def test_the_documented_example_imports_cleanly(self):
+        example = json.loads((ROOT / 'docs' / 'custom-catalogue.example.json').read_text())
+        status, body = self.service.call('POST', '/api/v1/custom/catalog', {'action': 'import', 'catalogue': example})
+        self.assertEqual(status, 200, body)
+        self.assertEqual((body['result']['imported'], body['result']['rejected']), (len(example['entries']), []))
+        self.service.call('POST', '/api/v1/custom/catalog', {'action': 'clear'})
+
     def test_merge_replace_remove_and_clear(self):
         one = {'title': 'One', 'url': 'https://downloads.example.org/1.bin'}
         two = {'title': 'Two', 'url': 'https://downloads.example.org/2.bin'}

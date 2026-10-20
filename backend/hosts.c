@@ -11,7 +11,6 @@ static const char *const data_domains[] = {"datanodes.to", NULL};
 /* Every domain below serves the same 1fichier file ids (api.1fichier.com domain list). */
 static const char *const fichier_domains[] = {"1fichier.com", "alterupload.com", "cjoint.net", "desfichiers.com",
     "dfichiers.com", "megadl.fr", "mesfichiers.org", "piecejointe.net", "pjointe.com", "tenvoi.com", "dl4free.com", NULL};
-static const char *const archive_domains[] = {"archive.org", NULL};
 static const char *const gofile_domains[] = {"gofile.io", NULL};
 /* Upload responses name itsfileditchfiles.st; its docs also name the other two. */
 static const char *const ditch_domains[] = {"fileditch.com", "itsfileditchfiles.st", "fileditchfiles.st", "fileditchvids.st", NULL};
@@ -26,8 +25,6 @@ static const HostAdapter hosts[] = {
     {"akirabox", "AkiraBox", "akia akira", akira_domains, HOST_BROWSER, ORBIT_SOURCE_AKIRABOX, ""},
     {"datanodes", "DataNodes", "data", data_domains, HOST_BROWSER, ORBIT_SOURCE_DATANODES, ""},
     {"1fichier", "1Fichier", "1fichier", fichier_domains, HOST_BROWSER, ORBIT_SOURCE_ONEFICHIER, ""},
-    {"archive", "Archive.org", "archive", archive_domains, HOST_DISABLED, ORBIT_SOURCE_ARCHIVE,
-     "Archive.org links are added from the catalogue. Paste other direct links instead."},
     {"gofile", "Gofile", "gofile1", gofile_domains, HOST_TORBOX, ORBIT_SOURCE_GOFILE,
      "Gofile does not allow scripted downloads without a premium account (its API answered error-notPremium on 2026-10-20). Use TorBox for Gofile links."},
     {"fileditch", "FileDitch", "dith fileditch1 ditch", ditch_domains, HOST_DISABLED, 0,

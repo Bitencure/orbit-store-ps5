@@ -1,0 +1,18 @@
+{
+  "format": "orbit-custom-catalogue",
+  "version": 1,
+  "entries": [
+    {
+      "title": "Example file (not a real link)",
+      "url": "https://downloads.example.org/files/example.bin",
+      "platform": "ps5",
+      "format": "File",
+      "filename": "example.bin",
+      "sizeBytes": 1048576
+    },
+    {
+      "title": "Another placeholder",
+      "url": "https://downloads.example.org/files/another-example.bin"
+    }
+  ]
+}

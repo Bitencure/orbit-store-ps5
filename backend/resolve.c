@@ -218,6 +218,11 @@ int resolve_direct(const HostAdapter *host, const char *url, const char *wanted_
     return 0;
 }
 
+static int cancel_progress(void *arg, curl_off_t a, curl_off_t b, curl_off_t c, curl_off_t d) {
+    (void)a; (void)b; (void)c; (void)d;
+    atomic_bool *cancel = arg;
+    return cancel && atomic_load(cancel);
+}
 typedef struct { char *data; size_t length; } Body;
 static size_t collect(char *d, size_t a, size_t b, void *arg) {
     Body *body = arg;
@@ -269,6 +274,9 @@ int resolve_viking(const char *page_url, atomic_bool *cancel, Resolved *out, cha
     curl_easy_setopt(c, CURLOPT_PROXY, "");
     curl_easy_setopt(c, CURLOPT_OPENSOCKETFUNCTION, provider_open_socket);
     curl_easy_setopt(c, CURLOPT_POSTFIELDS, form);
+    curl_easy_setopt(c, CURLOPT_NOPROGRESS, 0L);
+    curl_easy_setopt(c, CURLOPT_XFERINFOFUNCTION, cancel_progress);
+    curl_easy_setopt(c, CURLOPT_XFERINFODATA, cancel);
     curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, collect);
     curl_easy_setopt(c, CURLOPT_WRITEDATA, &body);
     CURLcode rc = curl_easy_perform(c);
