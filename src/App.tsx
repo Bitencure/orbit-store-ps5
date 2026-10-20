@@ -348,6 +348,13 @@ export default function App() {
           <button onClick={() => location.reload()}>{t("Reconnect")}</button>
         </div>
       )}
+      {orbit.system?.sandbox && (
+        <div className="connection-error" role="status">
+          {t(
+            "Test build: separate queue and settings, no updates or icon changes. Your installed Orbit is untouched.",
+          )}
+        </div>
+      )}
       {orbit.system && !orbit.system.stateHealthy && (
         <div className="connection-error" role="alert">
           {t(

@@ -60,7 +60,7 @@ bool orbit_is_stopping(void) {
 }
 int main(int argc, char **argv) {
     setvbuf(stdout, NULL, _IOLBF, 0);
-    copy_text(orbit.state_dir, sizeof orbit.state_dir, "/data/orbit-store");
+    copy_text(orbit.state_dir, sizeof orbit.state_dir, ORBIT_STATE_DIR);
     const unsigned char *runtime = NULL;
     size_t runtime_size = 0;
 #ifdef ORBIT_EMBED_RUNTIME
@@ -97,7 +97,9 @@ int main(int argc, char **argv) {
 #else
     (void)argc;
     (void)argv;
+#ifndef ORBIT_SANDBOX
     orbit.autoboot = true;
+#endif
 #endif
     if (orbit.port < 1024 || orbit.port > 65535 || catalog_init()) {
         fputs("Invalid configuration/catalogue.\n", stderr);
@@ -239,7 +241,7 @@ int main(int argc, char **argv) {
     printf("Firmware raw: 0x%08x\n", orbit.firmware);
     diagnostics_stage("firmware", "ok", 0);
 #endif
-#ifdef ORBIT_INSTALL_LAUNCHER
+#if defined(ORBIT_INSTALL_LAUNCHER) && !defined(ORBIT_SANDBOX)
     copy_text(orbit.launcher_status, sizeof orbit.launcher_status, "checking");
 #else
     copy_text(orbit.launcher_status, sizeof orbit.launcher_status, "not-included");
@@ -287,7 +289,7 @@ int main(int argc, char **argv) {
         api_stop();
         return 1;
     }
-#ifdef ORBIT_INSTALL_LAUNCHER
+#if defined(ORBIT_INSTALL_LAUNCHER) && !defined(ORBIT_SANDBOX)
     diagnostics_stage("launcher", "started", 0);
     int launcher = orbit_launcher_ensure(orbit.state_fd);
     pthread_mutex_lock(&orbit.mutex);
@@ -299,7 +301,7 @@ int main(int argc, char **argv) {
     pthread_mutex_unlock(&orbit.mutex);
     diagnostics_stage("launcher", launcher < 0 ? "error" : "ok", launcher);
 #endif
-#if defined(ORBIT_INSTALL_LAUNCHER) || defined(ORBIT_DESKTOP)
+#if (defined(ORBIT_INSTALL_LAUNCHER) && !defined(ORBIT_SANDBOX)) || defined(ORBIT_DESKTOP)
     diagnostics_stage("integrations", "started", 0);
     startup_result = autoboot_sync(runtime, runtime_size);
     diagnostics_stage("integrations", startup_result < 0 ? "error" : "ok", startup_result);
@@ -336,8 +338,13 @@ int main(int argc, char **argv) {
     if (startup_result)
         puts("Artwork workers could not start; the TV app shows covers as placeholders.");
     char ready_message[200];
-    snprintf(ready_message, sizeof ready_message, "Orbit Store :%d | Pair: %s | %s", orbit.port,
-             orbit.pair_code,
+    snprintf(ready_message, sizeof ready_message, "Orbit Store%s :%d | Pair: %s | %s",
+#ifdef ORBIT_SANDBOX
+             " TEST BUILD",
+#else
+             "",
+#endif
+             orbit.port, orbit.pair_code,
              !strcmp(orbit.launcher_status, "ready")   ? "Open the Orbit Store icon"
              : !strcmp(orbit.launcher_status, "error") ? "Icon setup failed; server is running"
                                                        : "Server ready");

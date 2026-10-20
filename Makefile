@@ -20,7 +20,7 @@ ARCHIVE_LIBS := -larchive -llzma -lbz2 -lz build/sevenzip-ps5.o -Wl,--whole-arch
 HOST_ARCHIVE_LIBS := -L/usr/local/lib -l:libarchive.a -llzma -lbz2 -lz build/sevenzip-host.o -Wl,--whole-archive .deps/7zip-host/liborbit7zip.a -Wl,--no-whole-archive -lstdc++
 PAYLOAD_LIBS := -L$(PS5_LIB)/lib -lcurl -lmicrohttpd -lssl -lcrypto $(ARCHIVE_LIBS) $(PS5_LAUNCHER_LIBS)
 PS5_FS_WRAPS := -Wl,--wrap=openat -Wl,--wrap=mkdirat -Wl,--wrap=fstatat -Wl,--wrap=linkat -Wl,--wrap=renameat -Wl,--wrap=unlinkat
-.PHONY: host payload payload-core test-backend test-launcher test-payload-imports test-updates
+.PHONY: host payload payload-core sandbox test-backend test-launcher test-payload-imports test-updates
 .deps/7zip-host/liborbit7zip.a: tools/build-7zip.sh tools/7zip-orbit.mak tools/patch-7zip.py
 	bash tools/build-7zip.sh host
 .deps/7zip-ps5/liborbit7zip.a: tools/build-7zip.sh tools/7zip-orbit.mak tools/patch-7zip.py
@@ -30,7 +30,7 @@ build/sevenzip-host.o: backend/sevenzip.cpp backend/sevenzip.h .deps/7zip-host/l
 build/sevenzip-ps5.o: backend/sevenzip.cpp backend/sevenzip.h .deps/7zip-ps5/liborbit7zip.a
 	$(PS5_PAYLOAD_SDK)/bin/prospero-clang++ -std=c++17 -O2 -Wall -Wextra -Werror -I.deps/7zip/CPP -c $< -o $@
 build/orbit-host build/orbit-test build/orbit-api-recovery-test build/orbit-transfer-benchmark-test: $(HOST_ARCHIVE_DEPS)
-build/orbit_runtime.elf build/orbit_store.elf build/orbit_core.elf build/orbit_transfer_benchmark.elf: $(PS5_ARCHIVE_DEPS)
+build/orbit_runtime.elf build/orbit_store.elf build/orbit_core.elf build/orbit_store_sandbox.elf build/orbit_transfer_benchmark.elf: $(PS5_ARCHIVE_DEPS)
 build/generated/network.h build/generated/launcher.h &: tools/embed-launcher.py config/network.json launcher/sce_sys/param.json launcher/sce_sys/icon0.png
 	python3 tools/embed-launcher.py
 host: build/orbit-host
@@ -49,6 +49,11 @@ build/orbit_store.elf: $(PAYLOAD_SOURCES) $(HEADERS) launcher/install.h launcher
 payload-core: build/orbit_core.elf
 build/orbit_core.elf: $(SOURCES) $(HEADERS) $(GENERATED) Makefile
 	$(PS5_CC) $(CPPFLAGS) $(CFLAGS) -Wno-unreachable-code-generic-assoc -I$(PS5_LIB)/include $(SOURCES) -o $@ -L$(PS5_LIB)/lib -lcurl -lmicrohttpd -lssl -lcrypto $(ARCHIVE_LIBS) $(PS5_FS_WRAPS)
+# Fork: first-run test payload. Same server as orbit_core.elf, but with its own state folder and
+# port, and no icon, updater, TV-app installer or payload-manager writes (see ORBIT_SANDBOX).
+sandbox: build/orbit_store_sandbox.elf
+build/orbit_store_sandbox.elf: $(SOURCES) $(HEADERS) $(GENERATED) Makefile
+	$(PS5_CC) $(CPPFLAGS) $(CFLAGS) -DORBIT_SANDBOX -Wno-unreachable-code-generic-assoc -I$(PS5_LIB)/include $(SOURCES) -o $@ -L$(PS5_LIB)/lib -lcurl -lmicrohttpd -lssl -lcrypto $(ARCHIVE_LIBS) $(PS5_FS_WRAPS)
 test-updates: build/orbit-host build/orbit-test
 	python3 tests/update_integration.py
 
@@ -151,6 +156,10 @@ test-custom: build/orbit-test
 # ORBIT_TEST_BIN=build/orbit-test-asan python3 tests/custom_integration.py
 build/orbit-test-asan: $(SOURCES) $(HEADERS) $(GENERATED) $(HOST_ARCHIVE_DEPS)
 	$(HOST_CC) $(CPPFLAGS) $(CFLAGS) -fsanitize=address,undefined -fno-omit-frame-pointer -DORBIT_DESKTOP -DORBIT_TEST $(SOURCES) -o $@ -lcurl -lmicrohttpd -lssl -lcrypto $(HOST_ARCHIVE_LIBS) -lpthread -lm
+# The ORBIT_TEST service as the sandbox payload builds it, to check that it names itself and moves
+# to its own port: python3 tests/custom_integration.py Sandbox
+build/orbit-sandbox-test: $(SOURCES) $(HEADERS) $(GENERATED) $(HOST_ARCHIVE_DEPS)
+	$(HOST_CC) $(CPPFLAGS) $(CFLAGS) -DORBIT_DESKTOP -DORBIT_TEST -DORBIT_SANDBOX $(SOURCES) -o $@ -lcurl -lmicrohttpd -lssl -lcrypto $(HOST_ARCHIVE_LIBS) -lpthread -lm
 # Local verification binary: production allowlists and socket guard, with the desktop download
 # restriction lifted so the real transfer code can be checked against real hosts. Never shipped.
 .PHONY: live-verify

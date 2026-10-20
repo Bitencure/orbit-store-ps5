@@ -282,7 +282,7 @@ static void *worker(void *unused) {
         if (session.return_to_browser && !strcmp(session.state, "queued") &&
             !session.stop && !orbit.stop && !atomic_load(&session.cancel)) {
             char home[64];
-            snprintf(home, sizeof home, "http://127.0.0.1:%d/", ORBIT_HTTP_PORT);
+            snprintf(home, sizeof home, "http://127.0.0.1:%d/", orbit.port);
             pthread_mutex_unlock(&orbit.mutex);
             int returned = probe_browser_open(home);
             pthread_mutex_lock(&orbit.mutex);

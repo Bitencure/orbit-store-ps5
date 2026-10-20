@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Builds this fork's PS5 payload (orbit_store.elf) and, unless --elf-only, the native TV app
+# Builds this fork's PS5 payload (orbit_store.elf), its first-test twin (orbit_store_sandbox.elf:
+# own state folder and port, no installs) and, unless --elf-only, the native TV app
 # (PPSA99177.ffpkg) with Podman or Docker, then writes SHA256SUMS next to them.
 # Follows BUILDING.md exactly; only the engine and the output folder are different.
 #
@@ -35,10 +36,11 @@ npm run build
 
 "$engine" build -f tools/Dockerfile.sdk -t orbit-sdk:0.43 .
 "$engine" build -t orbit-build:0.1 .
-"$engine" run --rm -v "$PWD:/work:Z" orbit-build:0.1 payload
+"$engine" run --rm -v "$PWD:/work:Z" orbit-build:0.1 payload sandbox
 
 mkdir -p "$out"
 cp build/orbit_store.elf "$out/orbit_store.elf"
+cp build/orbit_store_sandbox.elf "$out/orbit_store_sandbox.elf"
 if [ "${1:-}" != "--elf-only" ]; then
   sdk=app/.deps/ps5-opengl/ps5-opengl-sdk-1.0.0.tar.gz
   if [ ! -f "$sdk" ] && [ -n "${ORBIT_SOURCE_BUNDLE:-}" ]; then

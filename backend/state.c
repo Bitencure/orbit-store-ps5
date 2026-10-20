@@ -16,7 +16,7 @@ static Release releases[ORBIT_MAX_RELEASES + 1];
 Orbit orbit = {.releases = releases,
                .mutex = PTHREAD_MUTEX_INITIALIZER,
                .changed = PTHREAD_COND_INITIALIZER,
-               .port = ORBIT_HTTP_PORT,
+               .port = ORBIT_LISTEN_PORT,
                .state_fd = -1,
                .delete_archives = true,
                .concurrent_downloads = ORBIT_DEFAULT_DOWNLOADS};

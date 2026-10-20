@@ -216,6 +216,7 @@ export interface System {
   // Fork builds report these; official builds do not.
   forkTag?: string;
   customLinks?: boolean;
+  sandbox?: boolean;
   catalogueRevision: number;
   name: string;
   version: string;

@@ -283,6 +283,9 @@ static enum MHD_Result route(struct MHD_Connection *c, const char *url, const ch
         /* Fork: lets clients feature-detect pasted links without parsing version strings. */
         cJSON_AddStringToObject(o, "forkTag", ORBIT_FORK_TAG);
         cJSON_AddBoolToObject(o, "customLinks", true);
+#ifdef ORBIT_SANDBOX
+        cJSON_AddBoolToObject(o, "sandbox", true);
+#endif
         cJSON_AddStringToObject(o, "instanceId", orbit.instance_id);
         cJSON_AddBoolToObject(o, "stopping", orbit_is_stopping());
         cJSON_AddNumberToObject(o, "receiveProtocol", 1);

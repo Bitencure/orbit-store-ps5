@@ -25,6 +25,16 @@
 /* Unofficial fork identity. ORBIT_VERSION must stay the upstream protocol version:
  * the native app and updater compare it. The tag is shown separately. */
 #define ORBIT_FORK_TAG "custom.1"
+/* First-run test build for a console that already has Orbit installed. It keeps its own state
+ * folder and port, and never touches the icon, payload-manager copies, the TV-app installer or
+ * the updater, so the installed Orbit, its queue, settings and update feed are left alone. */
+#ifdef ORBIT_SANDBOX
+#define ORBIT_STATE_DIR "/data/orbit-store-fork-test"
+#define ORBIT_LISTEN_PORT 34178
+#else
+#define ORBIT_STATE_DIR "/data/orbit-store"
+#define ORBIT_LISTEN_PORT ORBIT_HTTP_PORT
+#endif
 /* Where this build looks for its own releases. The game catalogue deliberately keeps
  * following upstream; only binaries come from here, so the fork is never replaced by an
  * official build. The feed files live on this branch so upstream's payloads.json never conflicts. */

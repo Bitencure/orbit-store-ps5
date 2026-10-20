@@ -1117,6 +1117,43 @@ class VikingPastedLinks(Base):
         self.assertEqual(self.service.resolve('https://vikingfile.com/f/short')['state'], 'error')
 
 
+SANDBOX_BIN = ROOT / 'build' / 'orbit-sandbox-test'
+
+
+@unittest.skipUnless(SANDBOX_BIN.exists(), 'build/orbit-sandbox-test is not built')
+class Sandbox(unittest.TestCase):
+    """The first-test build must name itself and keep off the installed Orbit's port (34177)."""
+
+    def run_without_port(self, binary):
+        origin = Origin()
+        tmp = tempfile.TemporaryDirectory()
+        process = subprocess.Popen(
+            [str(binary), '--state', tmp.name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            env=dict(os.environ, ORBIT_TEST_URL=origin.base + '/fixture.bin', ORBIT_TEST_SIZE='1024'))
+        try:
+            for port in (34178, 34177):
+                for _ in range(100):
+                    try:
+                        with urllib.request.urlopen(f'http://127.0.0.1:{port}/api/v1/system', timeout=1) as r:
+                            return port, json.load(r)
+                    except OSError:
+                        time.sleep(0.1)
+            self.fail('service did not answer on 34177 or 34178')
+        finally:
+            process.terminate()
+            process.wait(10)
+            origin.shutdown()
+            tmp.cleanup()
+
+    def test_sandbox_build_uses_its_own_port_and_says_so(self):
+        port, system = self.run_without_port(SANDBOX_BIN)
+        self.assertEqual((port, system.get('sandbox'), system['httpPort']), (34178, True, 34178))
+
+    def test_normal_build_keeps_the_original_port_and_is_not_a_sandbox(self):
+        port, system = self.run_without_port(BIN)
+        self.assertEqual((port, system.get('sandbox'), system['httpPort']), (34177, None, 34177))
+
+
 if __name__ == '__main__':
     if not BIN.exists():
         sys.exit('Build first: tools/fork/host-build.sh build/orbit-test')
