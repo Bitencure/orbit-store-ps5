@@ -584,7 +584,10 @@ class Refresh(Base):
 
     def test_expired_link_can_be_replaced_and_resumes(self):
         job_id, job = self.interrupted_expiring_job('old1')
-        self.assertTrue(job['canRefreshUrl'], job)
+        self.assertTrue(job['canRefreshUrl'] and job['canRefreshLink'], job)
+        status, body = self.service.act(job_id, 'refresh-link')
+        self.assertEqual(status, 409, body)
+        self.assertIn('pasted link', body['error'])
         reply = self.refresh(job_id, self.origin.base + '/expiring/new1.bin')
         self.assertEqual(reply['state'], 'refreshed', reply)
         job = self.service.wait_job(job_id, {'complete', 'error'}, 120)

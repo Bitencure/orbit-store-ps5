@@ -699,6 +699,14 @@ static enum MHD_Result route(struct MHD_Connection *c, const char *url, const ch
             }
             char e[256] = {0};
             if (!strcmp(action, "refresh-link")) {
+                pthread_mutex_lock(&orbit.mutex);
+                bool pasted = job_can_refresh_url(job_find(id));
+                pthread_mutex_unlock(&orbit.mutex);
+                if (pasted) {
+                    /* No provider page exists to reopen; the browser interface takes the new address. */
+                    cJSON_Delete(input);
+                    return error(c, 409, "This download came from a pasted link. Open Orbit in a browser, go to Downloads and choose Refresh download link to paste its new link.");
+                }
                 cJSON_Delete(input);
                 input = cJSON_CreateObject();
                 cJSON_AddStringToObject(input, "action", "refresh");

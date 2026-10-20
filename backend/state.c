@@ -67,7 +67,8 @@ static cJSON *job_json(const Job *j, bool private_fields) {
     S("status", status);
     S("error", error);
     S("verification", verification);
-    cJSON_AddBoolToObject(o, "canRefreshLink", job_can_refresh_link(j));
+    /* A pasted link refreshes by pasting a new address; clients that cannot do that say so. */
+    cJSON_AddBoolToObject(o, "canRefreshLink", job_can_refresh_link(j) || job_can_refresh_url(j));
     /* Fork: pasted links refresh by pasting a new address (no browser step). */
     cJSON_AddBoolToObject(o, "canRefreshUrl", job_can_refresh_url(j));
     cJSON_AddStringToObject(o, "sourceId", j->release.source);
