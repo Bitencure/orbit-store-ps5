@@ -223,6 +223,8 @@ Do not commit anything under `build/`, `dist-fork/` or `.deps/`.
   misread it, so finish or remove pasted downloads before going back to an official ELF.
 - The fork keeps upstream's native content version (1.7.0) and title ID; installing it replaces the official TV app.
 - Native screens cannot type a URL (no practical on-screen keyboard flow); they hand off to the browser version.
+- 1Fichier's own download API (`download/get_token`) needs a Premium account and is not used; Gofile's website token
+  (`wt`) is obfuscated and deliberately not reimplemented.
 - Orbit Zero has no pasted-link feature and none can be added from this repository ([docs/ORBIT-ZERO.md](docs/ORBIT-ZERO.md)).
 - The sandbox build is a test aid. It has no updater and no icon, and it is not a release channel.
 - Cloudflare- or login-gated hosts that need a human cannot be automated; Orbit shows the reason instead.
