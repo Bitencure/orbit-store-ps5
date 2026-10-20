@@ -814,6 +814,7 @@ int main(int argc, char **argv)
         const char *preview_version = std::getenv("ORBIT_APP_VERSION");
         context.app_version = preview_version != nullptr ? preview_version : "01.000.001";
         context.open_browser = [] { return true; };
+        context.open_add_link = [] { return true; };
         // Preview callbacks never open websites or submit a real download.
         context.open_download = [](const orbit::BrowserSelection &) { return true; };
         orbit::App app(context);

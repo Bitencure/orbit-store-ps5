@@ -833,6 +833,49 @@ TEST(App, SettingsChoosesTheDefaultDrive)
     EXPECT_EQ(h.app.current_tab(), orbit::tab::discover);
 }
 
+TEST(App, MoreSettingsHandsOffToTheAddLinkPanelInTheBrowserVersion)
+{
+    AppHarness h;
+    int opened = 0, browser = 0;
+    h.context.open_add_link = [&opened] { ++opened; return true; };
+    h.app.open_settings(SettingsScreen::Section::more, true);
+    h.settle();
+    h.press(Action::confirm); // the only button here when the browser version button is absent
+    EXPECT_EQ(opened, 1);
+    // With both buttons, the first is the browser version and the second is Add a download link.
+    AppHarness both;
+    both.context.open_browser = [&browser] { ++browser; return true; };
+    both.context.open_add_link = [&opened] { ++opened; return true; };
+    both.app.open_settings(SettingsScreen::Section::more, true);
+    both.settle();
+    both.frame(Direction::down);
+    both.press(Action::confirm);
+    EXPECT_EQ(opened, 2);
+    EXPECT_EQ(browser, 0);
+}
+
+TEST(App, CinemaMoreSettingsOffersAddALinkAndOpensIt)
+{
+    NativeLook look(look::Interface::cinema);
+    AppHarness h;
+    int opened = 0;
+    h.context.open_add_link = [&opened] { ++opened; return true; };
+    h.app.open_settings(SettingsScreen::Section::more, true);
+    h.settle();
+    h.press(Action::confirm); // the Add a download link row leads the list
+    EXPECT_EQ(opened, 1);
+}
+
+TEST(App, AddLinkIsNotOfferedWhereTheBrowserCannotOpen)
+{
+    AppHarness h;
+    int opened = 0;
+    h.app.open_settings(SettingsScreen::Section::more, true);
+    h.settle();
+    h.press(Action::confirm); // nothing to activate: no browser available
+    EXPECT_EQ(opened, 0);
+}
+
 TEST(App, UpdatesInstallTheTvAppAndRestartTheServiceAfterConfirming)
 {
     AppHarness h(host::FixtureMode::updates);
@@ -891,6 +934,13 @@ TEST(App, SurvivesRandomInputEverywhere)
 
 } // namespace
 } // namespace orbit
+
+TEST(App, AddLinkOpensTheBrowserVersionAtItsLinkPanelOnTheLocalOrigin)
+{
+    EXPECT_STREQ(orbit::kAddLinkUrl, "http://127.0.0.1:34177/#add-url");
+    // It is a fixed local address, never built from input.
+    EXPECT_EQ(std::string(orbit::kAddLinkUrl).rfind("http://127.0.0.1:34177/", 0), 0u);
+}
 
 TEST(App, BrowserHandoffCannotChangeTheLocalOriginOrSmuggleACommand)
 {

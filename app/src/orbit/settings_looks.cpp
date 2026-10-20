@@ -107,6 +107,8 @@ std::vector<SettingsScreen::XbEntry> SettingsScreen::section_entries() const
             out.push_back({'A', 0});
         break;
     default:
+        if (ctx_.open_add_link)
+            out.push_back({'L', 0});
         if (ctx_.open_browser)
             out.push_back({'w', 0});
         out.push_back({'x', 0});
@@ -561,6 +563,11 @@ xb::List SettingsScreen::rows_of(const std::vector<XbEntry> &entries) const
                 row.text = tr("The last game you looked at, blurred");
             break;
         }
+        case 'L':
+            row.icon = icons::Icon::link;
+            row.title = tr("Add a download link");
+            row.text = tr("To download from your own link, paste it in the browser version. Orbit checks it first, then adds it to Downloads.");
+            break;
         case 'w':
             row.icon = icons::Icon::globe;
             row.primary = true;
@@ -993,6 +1000,9 @@ void SettingsScreen::press(const std::string &key, bool off, const InputFrame &i
         break;
     case 'w':
         act(Kind::open_browser, 0, intent, feedback);
+        break;
+    case 'L':
+        act(Kind::add_link, 0, intent, feedback);
         break;
     case 'O':
         if (!state.archive_account.signed_in)

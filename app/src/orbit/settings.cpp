@@ -1034,6 +1034,11 @@ void SettingsScreen::build_more(Pane &pane) const
               "phone or computer, pair it under Pair a device."));
     if (ctx_.open_browser)
         pane.buttons({{Kind::open_browser, tr("Open browser version"), ui::ButtonKind::primary}});
+    if (ctx_.open_add_link)
+    {
+        pane.body(tr("To download from your own link, paste it in the browser version. Orbit checks it first, then adds it to Downloads."));
+        pane.buttons({{Kind::add_link, tr("Add a download link"), ui::ButtonKind::secondary}});
+    }
     pane.gap(12.0f);
     pane.rule();
     const std::string running = app_release_version(ctx_.app_version);
@@ -1191,6 +1196,11 @@ void SettingsScreen::activate(const Control &control, Intent &intent, Feedback &
     case Kind::open_browser:
         feedback.play(hui::audio::Cue::launch);
         if (!ctx_.open_browser || !ctx_.open_browser())
+            intent.toast = tr("The browser could not be opened.");
+        break;
+    case Kind::add_link:
+        feedback.play(hui::audio::Cue::launch);
+        if (!ctx_.open_add_link || !ctx_.open_add_link())
             intent.toast = tr("The browser could not be opened.");
         break;
     }

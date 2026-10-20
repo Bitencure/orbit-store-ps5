@@ -73,6 +73,8 @@ struct Context
     std::string app_version;       // this app's contentVersion
     // Opens the browser version of Orbit; empty where it is not possible.
     std::function<bool()> open_browser;
+    // Fork: opens the browser version at its Add a download link panel; empty where not possible.
+    std::function<bool()> open_add_link;
     // Opens the exact option and destination; the browser still asks to proceed.
     std::function<bool(const BrowserSelection &)> open_download;
     float clock = 0.0f; // seconds since the app opened
@@ -1012,6 +1014,7 @@ class SettingsScreen final : public Screen
         restart_cancel,
         restart_retry,
         open_browser,
+        add_link,
         zero_toggle,
         archives_toggle,
         archive_sign_in,

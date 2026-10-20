@@ -12,6 +12,10 @@ struct BrowserSelection
     std::string release_id;
     std::string storage_id;
 };
+// Fork: opens the browser version straight at its "Add a download link" panel.
+// Typing a URL with the on-screen keyboard is impractical; the browser (or a paired
+// phone or computer) can paste it.
+inline constexpr const char *kAddLinkUrl = "http://127.0.0.1:34177/#add-url";
 inline std::string browser_handoff_url(const BrowserSelection &selection)
 {
     const auto valid = [](std::string_view id, std::size_t limit)

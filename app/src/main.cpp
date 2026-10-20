@@ -201,6 +201,8 @@ int main()
     context.app_version = read_content_version("/app0/sce_sys/param.json");
     context.open_browser = []
     { return sceSystemServiceLaunchWebBrowser(kBrowserUrl, nullptr) == 0; };
+    context.open_add_link = []
+    { return sceSystemServiceLaunchWebBrowser(orbit::kAddLinkUrl, nullptr) == 0; };
     context.open_download = [](const orbit::BrowserSelection &selection)
     {
         const std::string url = orbit::browser_handoff_url(selection);
