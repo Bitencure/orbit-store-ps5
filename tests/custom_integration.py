@@ -752,9 +752,10 @@ class TorBoxMock(socketserver.ThreadingMixIn, http.server.HTTPServer):
     daemon_threads = True
     allow_reuse_address = True
 
-    def __init__(self, origin, domains):
+    def __init__(self, origin, domains, hosters=None):
         super().__init__(('127.0.0.1', 0), TorBoxHandler)
         self.origin, self.domains, self.items, self.calls = origin, domains, {}, []
+        self.hosters = hosters  # a complete /webdl/hosters answer, when a test needs TorBox's real shape
         self.create_error = None  # (http status, TorBox error code) to answer createwebdownload with
         self.item_state = 'completed'  # what a created download then reports
         threading.Thread(target=self.serve_forever, daemon=True).start()
@@ -811,6 +812,8 @@ class TorBoxHandler(http.server.BaseHTTPRequestHandler):
         self.server.calls.append(('GET', self.path, None))
         if path == '/user/me':
             return self.send_json({'id': 4242})
+        if path == '/webdl/hosters' and self.server.hosters is not None:
+            return self.send_json(self.server.hosters)
         if path == '/webdl/hosters':
             return self.send_json([{'name': d, 'domains': [d], 'status': True, 'per_link_size_limit': 0,
                                     'daily_bandwidth_limit': 0, 'daily_link_limit': 0} for d in self.server.domains])
@@ -900,6 +903,93 @@ class TorBoxLinks(TorBoxBase):
         created = [c for c in self.torbox.calls if c[1].startswith('/webdl/createwebdownload')]
         self.assertEqual(len(created), 1)
         self.assertEqual(created[0][2]['link'][0], 'https://gofile.io/d/AbCdEf')
+
+
+def torbox_hosters(before, extra_domains=()):
+    """A /webdl/hosters answer shaped like TorBox's real one (2026-10-20: 162 hosters, 378 domains, several domains per
+    hoster, ViKiNG FiLE near the end with three), with `before` filler domains ahead of the hosters under test."""
+    def hoster(n, name, domains, status=True):
+        pattern = '|'.join(d.replace('.', '\\.') for d in domains)
+        return {'id': n, 'name': name, 'domains': list(domains), 'url': f'https://{domains[0]}', 'icon': 'https://example.invalid/i.png',
+                'status': status, 'type': 'hoster', 'note': None, 'nsfw': False, 'daily_link_limit': 100, 'daily_link_used': 0,
+                'daily_bandwidth_limit': 10737418240000, 'daily_bandwidth_used': 0, 'per_link_size_limit': 107374182400,
+                'regex': f'^https?://(?:[^./]+\\.)*({pattern})(/|$)'}
+    rows = [hoster(n, f'Filler {n}', [f'filler{n}-a.example', f'filler{n}-b.example']) for n in range(before // 2)]
+    rows += [hoster(9001, 'Off Host', ['rapidgator.example'], status=False),
+             hoster(9002, 'Data Nodes', ['datanodes.to']),
+             hoster(9003, 'ViKiNG FiLE', ['vikingfile.com', 'vikingf1le.us.to', 'vik1ngfile.site']),
+             hoster(9004, 'Local', ['127.0.0.1'])]
+    rows += [hoster(9100 + i, f'Late {i}', [d]) for i, d in enumerate(extra_domains)]
+    return rows
+
+
+class TorBoxRealShapeList(TorBoxBase):
+    """Regression: Vikingfile was listed in settings but refused for pasted links, because the first fork build kept only the
+    first 256 of TorBox's domains and Vikingfile sits at about number 340."""
+    sources = ('vikingfile', 'datanodes')
+    BEFORE = 338  # ViKiNG FiLE's first domain is then number 341, as in the real answer
+
+    @classmethod
+    def hosters(cls):
+        return torbox_hosters(cls.BEFORE)
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.origin = Origin()
+        cls.torbox = TorBoxMock(cls.origin, [], cls.hosters())
+        cls.service = Service(cls.tmp.name, cls.origin)
+        cls.service.start({'ORBIT_TEST_TORBOX_URL': cls.torbox.base,
+                           'ORBIT_TEST_VIKING_API': cls.origin.base + '/viking/check-file'})
+        cls.service.enable(*cls.sources)
+
+    def test_every_vikingfile_domain_gets_a_torbox_choice(self):
+        self.connect()
+        for host in ('vikingfile.com', 'vik1ngfile.site'):  # the two Vikingfile domains Orbit itself recognises
+            reply = self.service.resolve(f'https://{host}/f/abcdefghij')
+            self.assertEqual(reply['state'], 'needs-browser', (host, reply))
+            self.assertTrue(reply['delivery']['torbox'], (host, reply))
+
+    def test_the_settings_list_and_the_link_dialog_agree(self):
+        state = self.connect()
+        offered = {h['sourceId']: h['available'] for h in state['hosts']}
+        self.assertTrue(offered['vikingfile'] and offered['datanodes'], state)
+        self.assertGreaterEqual(state['listedDomains'], 2 * (self.BEFORE // 2) + 5, 'every domain TorBox listed must be kept')
+        reply = self.service.resolve('https://vikingfile.com/f/abcdefghij')
+        self.assertEqual(reply['delivery']['torbox'], offered['vikingfile'], reply)
+
+    def test_matching_stays_exact(self):
+        self.connect()
+        for link in ('https://notvikingfile.com/f/abcdefghij', 'https://vikingfile.com.evil.example/f/abcdefghij',
+                     'https://vikingfile.co/f/abcdefghij'):
+            reply = self.service.resolve(link)
+            self.assertNotEqual(reply.get('state'), 'ready', (link, reply))
+            self.assertFalse(reply.get('delivery', {}).get('torbox'), (link, reply))
+
+    def test_a_listed_but_switched_off_host_is_still_refused(self):
+        self.connect()
+        reply = self.service.resolve('https://rapidgator.example/file/abc')
+        self.assertFalse(reply.get('delivery', {}).get('torbox'), reply)
+
+
+class TorBoxOversizedAnswer(TorBoxRealShapeList):
+    """An answer past Orbit's 1 MiB limit must fail closed (no connection, no TorBox choice), never be cut short."""
+    BEFORE = 17000
+
+    def test_every_vikingfile_domain_gets_a_torbox_choice(self):
+        self.service.call('POST', '/api/v1/debrid', {'action': 'connect', 'apiKey': 'k' * 24})
+        for _ in range(100):
+            state = self.service.call('GET', '/api/v1/debrid')[1]
+            if not state['busy'] and state['error']:
+                break
+            time.sleep(0.2)
+        self.assertFalse(state['connected'], state)
+        self.assertTrue(state['error'], state)
+        reply = self.service.resolve('https://vikingfile.com/f/abcdefghij')
+        self.assertFalse(reply['delivery']['torbox'], reply)
+
+    test_the_settings_list_and_the_link_dialog_agree = test_matching_stays_exact = None
+    test_a_listed_but_switched_off_host_is_still_refused = None
 
 
 class TorBoxRejections(unittest.TestCase):

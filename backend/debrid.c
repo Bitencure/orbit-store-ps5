@@ -20,7 +20,12 @@
 #define RESPONSE_MAX (1024 * 1024)
 #define HOST_TTL 600
 #define HOST_COUNT 4
-#define TORBOX_LISTED 256
+/* TorBox's /webdl/hosters held 162 hosters and 378 domains on 2026-10-20. The first fork build kept only 256
+ * of them, which silently dropped Vikingfile (domains 339 and 341) from pasted links while the settings page,
+ * which maps every domain, still showed it as available. The table now grows to fit; the ceiling exists only
+ * so a broken response cannot use unbounded memory, and exceeding it fails the refresh instead of truncating. */
+#define TORBOX_LISTED_MAX 8192
+typedef struct { char domain[96]; bool available; int64_t limit; } Listed;
 static const char *const host_sources[HOST_COUNT] = {"archive", "vikingfile", "datanodes", "1fichier"};
 static int source_host(const char *source) {
     if (source)
@@ -49,7 +54,7 @@ static struct {
     unsigned revision;
     struct { bool available; int64_t limit; } hosts[HOST_COUNT];
     /* Fork: every domain TorBox listed at the last check, for pasted links. */
-    struct { char domain[64]; bool available; int64_t limit; } listed[TORBOX_LISTED];
+    Listed *listed;
     int listed_count;
 } debrid;
 typedef struct {
@@ -269,8 +274,9 @@ static void pause_jobs_locked(void) {
 static void check_account(const char *key) {
     char err[256] = {0}, account[65] = {0}; time_t retry = 0;
     bool available[HOST_COUNT] = {0}; int64_t limits[HOST_COUNT] = {0};
-    static struct { char domain[64]; bool available; int64_t limit; } listed[TORBOX_LISTED]; /* One checker thread. */
-    int listed_count = 0;
+    Listed *listed = NULL;
+    int listed_count = 0, listed_capacity = 0;
+    bool listed_overflow = false;
     cJSON *user = call(key, "/user/me?settings=false", NULL, true, NULL, &retry, err, sizeof err, NULL);
     bool ok = user && account_hash(cJSON_GetObjectItemCaseSensitive(user, "data"), account);
     cJSON_Delete(user);
@@ -292,7 +298,14 @@ static void check_account(const char *key) {
             bool usable = valid && bandwidth && count && cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(host, "status"));
             int64_t room = daily > used && (!limit || daily - used < limit) ? daily - used : limit;
             if (index >= 0) { available[index] = usable; limits[index] = room; }
-            if (listed_count < TORBOX_LISTED && strlen(domain->valuestring) < sizeof listed[0].domain) {
+            /* A domain too long for the buffer is skipped, which is the safe direction: no TorBox choice for it. */
+            if (strlen(domain->valuestring) < sizeof listed[0].domain) {
+                if (listed_count == listed_capacity) {
+                    int grown = listed_capacity ? listed_capacity * 2 : 512;
+                    Listed *bigger = grown <= TORBOX_LISTED_MAX ? realloc(listed, (size_t)grown * sizeof *listed) : NULL;
+                    if (!bigger) { listed_overflow = true; continue; }
+                    listed = bigger; listed_capacity = grown;
+                }
                 copy_text(listed[listed_count].domain, sizeof listed[0].domain, domain->valuestring);
                 listed[listed_count].available = usable;
                 listed[listed_count++].limit = room;
@@ -300,6 +313,7 @@ static void check_account(const char *key) {
         }
     }
     cJSON_Delete(hosters);
+    if (ok && listed_overflow) { ok = false; copy_text(err, sizeof err, "TorBox returned a longer host list than Orbit can hold."); }
     if (!ok && !err[0]) copy_text(err, sizeof err, "TorBox returned invalid host availability.");
     pthread_mutex_lock(&orbit.mutex);
     if (ok && !debrid.stop) {
@@ -315,7 +329,8 @@ static void check_account(const char *key) {
             copy_text(debrid.key, sizeof debrid.key, key); copy_text(debrid.account, sizeof debrid.account, account);
             debrid.connected = true; debrid.checked = time(NULL);
             for (int i = 0; i < HOST_COUNT; i++) { debrid.hosts[i].available = available[i]; debrid.hosts[i].limit = limits[i]; }
-            memcpy(debrid.listed, listed, sizeof debrid.listed);
+            free(debrid.listed);
+            debrid.listed = listed; listed = NULL;
             debrid.listed_count = listed_count;
             debrid.revision++;
         }
@@ -328,6 +343,7 @@ static void check_account(const char *key) {
         debrid.listed_count = 0;
         debrid.revision++;
     }
+    free(listed);
     copy_text(debrid.error, sizeof debrid.error, err);
     if (retry > debrid.retry_at) debrid.retry_at = retry;
     debrid.next_check = time(NULL) + (ok ? HOST_TTL - 60 : 60);
@@ -386,6 +402,7 @@ void debrid_stop(void) {
     pthread_mutex_lock(&orbit.mutex);
     debrid.connected = false;
     OPENSSL_cleanse(debrid.key, sizeof debrid.key); OPENSSL_cleanse(debrid.pending_key, sizeof debrid.pending_key);
+    free(debrid.listed); debrid.listed = NULL; debrid.listed_count = 0;
     pthread_mutex_unlock(&orbit.mutex);
 }
 cJSON *debrid_status(void) {
@@ -399,6 +416,8 @@ cJSON *debrid_status(void) {
     cJSON_AddNumberToObject(o, "checkedAt", (double)debrid.checked);
     cJSON_AddNumberToObject(o, "retryAt", (double)debrid.retry_at);
     cJSON_AddNumberToObject(o, "revision", debrid.revision);
+    /* How many TorBox domains pasted links are checked against (a count only; no domain, link or key is exposed). */
+    cJSON_AddNumberToObject(o, "listedDomains", debrid.listed_count);
     cJSON *hosts = cJSON_AddArrayToObject(o, "hosts");
     for (int i = 0; i < HOST_COUNT; i++) {
         cJSON *h = cJSON_CreateObject(); cJSON_AddStringToObject(h, "sourceId", host_sources[i]);
