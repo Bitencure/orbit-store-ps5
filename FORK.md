@@ -27,6 +27,14 @@ Branches: `main` mirrors upstream's docs and catalogue feeds · `source` holds u
   encrypted catalogue is never modified, so upstream catalogue updates keep working.
 - **TorBox for pasted links**, only when your account is connected and TorBox's own live host list names the host,
   with plain messages for links TorBox rejects.
+- **A computer fallback for browser-assisted downloads.** If the PS5 browser cannot finish a provider's steps, finish them in your
+  computer's browser, copy the Download button's link, and paste it into the panel. It is held to the same checks as a link read
+  from the PS5 browser (route shape, host allowlist, address guard, the file's own name, size and validators).
+- **The destination is always visible**: the panel shows the full path before you add a file ("Saves to /mnt/usb0/homebrew/…"), and
+  Downloads shows "Saving to …" for active jobs. A mounted USB drive is the default unless you set another.
+- **Plain explanations of progress.** The counter is durable progress; the `.part` file can be longer ([docs/PROGRESS.md](docs/PROGRESS.md)).
+- **A hardware check tool** (`tools/fork/hardware-check.py`) that cancels, pauses and restarts at exact byte counts and checks the files
+  over FTP, because a click cannot cancel a six-second download.
 - **A sandbox build for the first run** (`orbit_store_sandbox.elf`): its own state folder and port, no icon,
   updater, installer or autostart writes. See [docs/FIRST-TEST.md](docs/FIRST-TEST.md).
 - The in-app updaters read **this fork's** feeds, so an official build is never offered over it.
@@ -36,14 +44,15 @@ format for people who never paste a link) is upstream's code, unchanged.
 
 ## Support matrix (pasted links)
 
-"Verified" means what I could observe on **2026-10-20 without a PS5**. Nothing was tested on console hardware, so
-every browser-assisted row still has an unverified human step on the console.
+"Verified" means what I could observe on **2026-10-20**: on a Linux desktop against mocks and live hosts, and, where a row says
+so, on the first hardware test of the sandbox build (a PS5, report kept outside the repository). Browser capture and real TorBox
+downloads have **not** been seen to work on a console.
 
 | Host | Route for a pasted link | TorBox | Status |
 |---|---|---|---|
-| Any public `https://` file | Direct, after a one-request check. Resumes only if the host honours byte ranges and sends an ETag or Last-Modified | Only if TorBox lists the domain | **Verified.** 58 integration tests against mocks. Real files: GitHub's release CDN (redirect to a signed URL) paused at 20.7 MB, resumed from the saved offset and matched the published SHA-256; a 10 MiB file from OVH came back byte-identical |
-| Rootz | PS5 browser step; name and size are read from the provider's file link | Not offered (not on TorBox's list) | **Verified live except the human step.** A real upload resolved, its real CDN link passed Orbit's production rules, the name and size were learned from it and the download was byte-identical. Pressing Download in the PS5 browser is **unverified** |
-| Vikingfile | PS5 browser step; name and size from its public file listing | Yes, when connected | Listing **verified live**. Capture tested against a mock; the PS5 browser step is **unverified** |
+| Any public `https://` file | Direct, after a one-request check. Resumes only if the host honours byte ranges and sends an ETag or Last-Modified | Only if TorBox lists the domain | **Verified, including on hardware.** Integration tests against mocks; real files on the desktop (GitHub's release CDN, a 10 MiB OVH file). On the PS5 (first hardware test): a 10 MiB file to internal storage and to USB, and a 116 MB file paused and resumed on USB, all with matching SHA-256 |
+| Rootz | PS5 browser step (name and size read from the provider's file link), or the computer route | Not offered (not on TorBox's list) | **PS5 browser: failed on hardware.** Every press of Rootz's Download opens an advertising tab and the PS5 browser never reached a usable link (I reproduced the ad tab on a desktop browser; it is how Rootz's free download works). **Pasting a real CDN link:** verified live on the desktop (resolved, validated, name and size learned, byte-identical). The computer route has not been tried on a console |
+| Vikingfile | PS5 browser step (name and size from its public file listing), or the computer route | Yes, when connected. The first hardware test found the link dialog refusing it although settings listed it: fixed (see below), **not yet seen working on a console** | Listing **verified live**. The page shows a Cloudflare Turnstile check, so a person must pass it. **PS5 capture: failed on hardware**: Orbit had found a link and refused it (the banner said it was waiting for a fresh one), and the reason was not recorded; this build reports it. The computer route is **unverified** on hardware |
 | 1Fichier | PS5 browser step, name and size learned at capture; or TorBox | Yes, when connected | **Unverified** against the real site (mocks only) |
 | DataNodes | Same as 1Fichier | Yes, when connected | **Unverified** |
 | AkiraBox | Same as 1Fichier | Not on TorBox's list | **Unverified** |
@@ -73,6 +82,28 @@ were not found anywhere. They are treated only as search aliases, never as a way
 A provider is offered only for what its real flow returned. If a host later removes its challenge or adds a public API,
 re-run `tools/fork/host-build.sh build/orbit-live && python3 tests/live_hosts.py --yes` before changing its entry in
 `backend/hosts.c`.
+
+## Since the first hardware test (build custom.2)
+
+The first test of the sandbox build on a PS5 left Orbit's installed copy untouched (backup comparison `UNCHANGED`), and direct downloads,
+USB and internal storage, and pause/resume worked. Changes made from what it found:
+
+- **TorBox host detection (fixed, found by reading TorBox's real answer).** The fork kept only the first 256 of TorBox's 378 listed
+  domains, and Vikingfile is number 339 to 341, so pasted Vikingfile links were refused while the settings page (which maps every domain)
+  showed it available. The table now grows to fit; host matching is unchanged (the link's host must equal a listed domain or be a
+  subdomain of it). `/api/v1/debrid` reports `listedDomains`. The key is never logged or returned.
+- **Browser-assisted downloads.** The banner "Waiting for a fresh download link…" appears only after Orbit *found* a link and refused it, so the
+  first Vikingfile attempt was a rejected link, not a missed one; the likely reason is that the first guide told you to press the page's own
+  Download button, which uses up a single-use link. The session now reports the reason (a sentence, never an address) and counts
+  (processes, bytes read, read failures, passes, links found and refused). The computer route is the fallback. The Vikingfile page is behind a Cloudflare
+  Turnstile and Rootz's is ad-gated, so a person is needed either way; nothing automates or bypasses either.
+- **Progress counter vs `.part` file.** Not a bug: the counter is durable progress, the file is the furthest byte written ([docs/PROGRESS.md](docs/PROGRESS.md)).
+- **Cancel and recovery.** New deterministic tests (a 48 MiB file held at an exact byte count) for progress, cancel with and without deleting
+  the partial, resume after cancel, restart after a clean stop and after a kill, and a tampered partial, in both the range and USB layouts.
+  They also found that a test restart dropped the layout setting (a test fix), and that saved links loaded after the web server started
+  (moved before it).
+- **Documentation and interface.** USB-default storage, the `socat` alternative to `nc`, backup and cleanup paths (the installed TV-app
+  package was on USB), unique file names, the missing toast, and the visible destination.
 
 ## Which parts must match
 
@@ -126,7 +157,8 @@ python3 -m venv .venv && .venv/bin/python tools/bootstrap.py && npm ci && npm ru
 tools/fork/host-build.sh               # build/orbit-host, build/orbit-test, build/orbit-hosts-test
 tools/fork/host-build.sh build/orbit-sandbox-test   # the sandbox flags on the host, for the Sandbox tests
 ./build/orbit-hosts-test               # 131 unit checks
-python3 tests/custom_integration.py    # 58 integration tests (local mock servers only)
+python3 tests/custom_integration.py    # 92 integration tests (local mock servers only)
+npm test                               # web unit tests (drive choice)
 tools/fork/host-build.sh build/orbit-live && python3 tests/live_hosts.py --yes   # opt-in; contacts real hosts
 ```
 
@@ -147,17 +179,17 @@ build I ran:
 - Native unit tests build with the host compiler: `app/tools/build-tests.sh` (needs `ninja` and `libwebp`; set
   `USE_CCACHE=0` without ccache). 180 tests pass (176 upstream's, 4 new).
 
-**Artifacts from my build** (source tree of commit `db23c3e`, Podman 6.1.4, 2026-10-20; nothing was installed or uploaded):
+**Artifacts from my build** (source tree of commit `e5c5891`, build `custom.2`, Podman 6.1.4, 2026-10-20; nothing was installed or uploaded):
 
 | File | Size | SHA-256 |
 |---|---|---|
-| `orbit_store.elf` | 42,575,016 | `2c5d33e60d0c4b908f0ab712e8c8018cde4b49cc63b5e5c37eb81a3003c555e4` |
-| `orbit_store_sandbox.elf` | 22,050,432 | `9ce87a6d72e466394296a6cdb0d2602669fdd794566cca25378a7e676165981c` |
-| `PPSA99177.ffpkg` | 114,294,784 | `ed8129c511d03c5ed0cf1fd0b98f0469972291993f5cfc1fdb253e2854eda5b2` |
+| `orbit_store.elf` | 42,593,728 | `f71c1b8d46021db924bf2d79665c7289ffb5e7593c747149f8996dffe99fb88b` |
+| `orbit_store_sandbox.elf` | 22,069,120 | `ca78f16e64cd50776c1b1dc9ad0393bcc7d5002d041ec578c1a937d8e98fdb0c` |
+| `PPSA99177.ffpkg` | 114,294,784 | `9f6071e369dac962299f3d351dd1ea39e7a05ff70965dbc2e72f32f99f9ef975` |
 
-**Check them yourself.** `tools/fork/verify-build.sh dist-fork/1.3.5-custom.1/SHA256SUMS` checks the hashes; add `--rebuild` to
+**Check them yourself.** `tools/fork/verify-build.sh dist-fork/1.3.5-custom.2/SHA256SUMS` checks the hashes; add `--rebuild` to
 export the committed tree with `git archive`, rebuild both ELFs from scratch in a temporary folder and compare. A later commit
-only changed docs, tests or `tools/fork/` scripts if `git diff --stat db23c3e..HEAD -- backend src app Makefile Dockerfile tools/build-deps.sh`
+only changed docs, tests or `tools/fork/` scripts if `git diff --stat e5c5891..HEAD -- backend src app Makefile Dockerfile tools/build-deps.sh i18n catalog package.json package-lock.json`
 is empty, which is why those hashes still describe the tip. One input is not pinned by this repo: `tools/bootstrap.py` downloads
 curl.se's *current* CA bundle (SHA-256 `a41b5d356aea97a529fe27e0f7316d2f9d946d75927476cf9cf1b90637d00505` in my build), which the ELF embeds.
 If curl.se publishes a newer one, a rebuild differs by that alone.
@@ -181,18 +213,18 @@ it differs by the fork's changes.
 | Layer | Result |
 |---|---|
 | Host filter, URL and filename rules, socket guard (production rules) | 131 checks pass |
-| Pasted-link service against mock origins (redirects, HTML and error pages, filenames, Range and range-less hosts, interruption and resume, missing validators, expired link refresh, size change after check, late off-site redirect, saved links, restart, tampered queue, TorBox and Vikingfile mocks, learned names and sizes, hostile names, FileDitch status, the sandbox flags and its stop button) | 58 tests pass, also under AddressSanitizer and UBSan with no report; the key safety rules were mutation-checked |
+| Pasted-link service against mock origins (redirects, HTML and error pages, filenames, Range and range-less hosts, interruption and resume, missing validators, expired link refresh, size change after check, late off-site redirect, saved links, restart, tampered queue, TorBox and Vikingfile mocks, learned names and sizes, hostile names, FileDitch status, the sandbox flags and its stop button) | 92 tests pass, also under AddressSanitizer and UBSan with no report, and inside a read-only jail (`tools/fork/audit-writes.sh`: 7,614 filesystem writes logged, none outside the state and storage folders); the key safety rules were mutation-checked. Includes TorBox answers shaped like the real one (378 domains), pasted links, and progress, cancel and recovery against a 48 MiB file held at an exact byte count |
 | Web UI | Type-checks and builds; driven in headless Chromium through add, rename, errors, TorBox-only, the browser step, new-link prompt and all four looks; the sandbox notice and its two-step Stop button were driven against the host sandbox build, and the service exited cleanly |
-| Native app | 180 unit tests pass, including the new hand-off |
+| Native app | 180 unit tests pass, including the new hand-off. Web unit tests: 5 pass |
 | Real hosts | `tests/live_hosts.py`: 8 checks pass (generic CDN file, Vikingfile listing, FileDitch status and challenge, Rootz end to end, Gofile refusal) |
 | Desktop rehearsal of the first-test steps | Direct URL, pause, resume and checksum against a real public file, using the production host rules and the real transfer code |
-| **PS5 hardware** | **Not tested.** No ELF run, no FFPKG install, no PS5 browser capture, no controller navigation of the new screens |
-| Real TorBox account | Not tested (mock API only) |
+| **PS5 hardware** | First test of the sandbox build (custom.1): start, isolation from the installed Orbit, direct downloads (internal and USB), pause and resume **passed**; Rootz and Vikingfile browser capture **failed**; TorBox connected but the link dialog refused Vikingfile (fixed in custom.2, **not retested**); cancel and restart recovery were **inconclusive**. No FFPKG install, no controller navigation of the new screens. custom.2 has **not been run on a console** |
+| Real TorBox account | Connection tested once on hardware. **No real TorBox download has been seen to work** (mock API only) |
 | Orbit Zero | Not changed. Its console calls were read from the distributed app; it was not run ([docs/ORBIT-ZERO.md](docs/ORBIT-ZERO.md)) |
 | Languages | New strings are in `i18n/en.json` only; the other ten show English |
 
-**Ready for a first hardware test?** Yes, with the sandbox build and [docs/FIRST-TEST.md](docs/FIRST-TEST.md) only. Not
-ready to replace the installed Orbit, and not ready to claim any browser-assisted host works on a console.
+**Next hardware test:** [docs/HARDWARE-RETEST.md](docs/HARDWARE-RETEST.md), the sandbox build only. The fork is not ready to
+replace the installed Orbit, and no browser-assisted host or TorBox download may be called working until it has been seen on a console.
 
 ## Keeping the fork current
 
